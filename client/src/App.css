@@ -246,6 +246,21 @@ button.danger {
   color: #7fd99a;
 }
 
+.results {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.results th,
+.results td {
+  text-align: left;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  word-break: break-word;
+}
+
 @media (max-width: 560px) {
   .meta {
     grid-template-columns: 1fr;

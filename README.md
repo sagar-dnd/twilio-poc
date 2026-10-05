@@ -6,7 +6,8 @@ Working prototype: Express issues Access Tokens + TwiML; React uses `@twilio/voi
 
 1. Copy `.env.example` → `.env` and fill in Twilio credentials (API Key/Secret, not Account Auth Token for tokens).
 2. In Twilio Console create a **TwiML App** whose Voice URL is your public `POST /voice` (use [ngrok](https://ngrok.com) locally: `ngrok http 3001`).
-3. Point a Twilio number (or use the number as `TWILIO_PHONE_NUMBER` caller ID) as needed for PSTN dials.
+3. For **phone → browser** inbound: set the Twilio number’s Voice URL to `https://<public>/voice/inbound?identity=agent-poc` (POST). The TwiML App URL alone does **not** handle PSTN inbound.
+4. Use that number as `TWILIO_PHONE_NUMBER` (caller ID / REST From).
 4. Install & run:
 
 ```bash
@@ -23,7 +24,7 @@ Open http://localhost:5173
 | Area | Where |
 |------|--------|
 | SDK setup, tokens, register, cleanup | Register / Unregister in UI · `useTwilioDevice.js` |
-| Outbound / inbound, call events | Connect · second browser w/ other identity → ToClient |
+| Outbound / inbound, call events | Connect · **Ring this identity** · second browser ToClient · phone → `/voice/inbound` |
 | Mic permission, input/output devices | Audio section after register |
 | Token expiry + refresh | `tokenWillExpire` → `updateToken`; short `TOKEN_TTL_SECONDS` |
 | Error / disconnect demo | Hang up · Inject invalid token · Unregister then Register |

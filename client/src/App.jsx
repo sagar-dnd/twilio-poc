@@ -1,14 +1,53 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTwilioDevice } from './useTwilioDevice'
 import './App.css'
+
+const E164 = /^\+[1-9]\d{6,14}$/
+const DISPOSITIONS = ['answered', 'no_answer', 'busy', 'voicemail', 'failed']
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
 
 export default function App() {
   const [identity, setIdentity] = useState('agent-poc')
   const [to, setTo] = useState('')
-  const [toClient, setToClient] = useState('')
   const [busy, setBusy] = useState(false)
+  const [numbers, setNumbers] = useState(['', '', '', '', ''])
+  const [coolOffSec, setCoolOffSec] = useState(5)
+  const [loopRunning, setLoopRunning] = useState(false)
+  const [loopIndex, setLoopIndex] = useState(-1)
+  const [loopPhase, setLoopPhase] = useState('idle')
+  const [coolLeft, setCoolLeft] = useState(0)
+  const [pendingEnd, setPendingEnd] = useState(null)
+  const [results, setResults] = useState([])
+  const stopRef = useRef(false)
+  const dispWaitRef = useRef(null)
 
   const twilio = useTwilioDevice(identity)
+
+  // Warn before refresh/close during dialer work (browser shows its own confirm dialog)
+  useEffect(() => {
+    const armed =
+      loopRunning ||
+      !!twilio.activeCall ||
+      !!twilio.incomingCall ||
+      !!pendingEnd ||
+      twilio.deviceState === 'registered'
+    if (!armed) return
+    const onBeforeUnload = (e) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [
+    loopRunning,
+    pendingEnd,
+    twilio.activeCall,
+    twilio.incomingCall,
+    twilio.deviceState,
+  ])
 
   async function onRegister() {
     setBusy(true)
@@ -22,15 +61,98 @@ export default function App() {
   async function onCall() {
     setBusy(true)
     try {
-      await twilio.connect({
-        to: to.trim() || undefined,
-        toClient: toClient.trim() || undefined,
-      })
+      await twilio.connect({ to: to.trim() })
     } catch (e) {
       /* logged in hook */
     } finally {
       setBusy(false)
     }
+  }
+
+  async function onRingInbound() {
+    setBusy(true)
+    try {
+      const res = await fetch('/demo/ring-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identity }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || `ring ${res.status}`)
+    } catch (e) {
+      alert(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function pickDisposition(d) {
+    const wait = dispWaitRef.current
+    dispWaitRef.current = null
+    setPendingEnd(null)
+    wait?.(d)
+  }
+
+  async function waitDisposition() {
+    return new Promise((resolve) => {
+      dispWaitRef.current = resolve
+    })
+  }
+
+  async function runPowerLoop() {
+    const list = numbers.map((n) => n.trim())
+    if (list.some((n) => !E164.test(n))) {
+      alert('Enter 5 valid E.164 numbers')
+      return
+    }
+    stopRef.current = false
+    setResults([])
+    setLoopRunning(true)
+    const coolMs = Math.max(0, Number(coolOffSec) || 0) * 1000
+
+    for (let i = 0; i < list.length; i += 1) {
+      if (stopRef.current) break
+      setLoopIndex(i)
+      setLoopPhase('calling')
+      const end = await twilio.connectUntilEnd({ to: list[i] })
+      if (stopRef.current) break
+      setLoopPhase('disposition')
+      setPendingEnd({ to: list[i], ...end })
+      const disposition = await waitDisposition()
+      if (stopRef.current || disposition === 'stopped') break
+      setResults((prev) => [
+        ...prev,
+        {
+          to: list[i],
+          disposition,
+          sdk: end.reason + (end.error ? ` ${end.error}` : ''),
+          at: new Date().toLocaleTimeString(),
+        },
+      ])
+      if (i < list.length - 1 && coolMs > 0 && !stopRef.current) {
+        setLoopPhase('cooloff')
+        for (let s = Math.ceil(coolMs / 1000); s > 0; s -= 1) {
+          if (stopRef.current) break
+          setCoolLeft(s)
+          await sleep(1000)
+        }
+        setCoolLeft(0)
+      }
+    }
+
+    setLoopPhase('idle')
+    setLoopIndex(-1)
+    setLoopRunning(false)
+    setPendingEnd(null)
+  }
+
+  function stopPowerLoop() {
+    stopRef.current = true
+    twilio.hangup()
+    pickDisposition('stopped')
+    setLoopRunning(false)
+    setLoopPhase('idle')
+    setCoolLeft(0)
   }
 
   return (
@@ -106,10 +228,27 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <h2>2. Place call</h2>
+        <h2>2a. Incoming call</h2>
         <p className="hint">
-          Outbound hits your TwiML App Voice URL (<code>POST /voice</code>). Use E.164 or dial another
-          client identity (open a second browser with a different identity).
+          Device must be <strong>registered</strong>. Click Ring, or call your Twilio number after
+          pointing its Voice URL to public <code>POST /voice/inbound?identity={identity}</code>.
+        </p>
+        <div className="row">
+          <button
+            type="button"
+            disabled={busy || twilio.deviceState !== 'registered'}
+            onClick={onRingInbound}
+          >
+            Ring this identity (REST inbound)
+          </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>2b. Place outbound call</h2>
+        <p className="hint">
+          Outbound hits TwiML App <code>POST /voice</code>. Destination must be E.164 (e.g.{' '}
+          <code>+15551234567</code>). Trial accounts can only call verified numbers.
         </p>
         <label>
           To (E.164)
@@ -117,22 +256,20 @@ export default function App() {
             value={to}
             onChange={(e) => setTo(e.target.value)}
             placeholder="+15551234567"
-            disabled={!!toClient}
-          />
-        </label>
-        <label>
-          ToClient (identity)
-          <input
-            value={toClient}
-            onChange={(e) => setToClient(e.target.value)}
-            placeholder="agent-b"
-            disabled={!!to}
+            inputMode="tel"
+            autoComplete="tel"
           />
         </label>
         <div className="row">
           <button
             type="button"
-            disabled={busy || twilio.deviceState !== 'registered' || twilio.activeCall}
+            disabled={
+              busy ||
+              loopRunning ||
+              twilio.deviceState !== 'registered' ||
+              twilio.activeCall ||
+              !E164.test(to.trim())
+            }
             onClick={onCall}
           >
             Connect
@@ -161,16 +298,109 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <h2>3. Audio</h2>
+        <h2>2c. Power loop — 5 numbers</h2>
+        <p className="hint">
+          Calls one E.164 number at a time. After hangup, pick a disposition, then cool-off before the
+          next dial. Stop cancels the queue.
+        </p>
+        {numbers.map((n, i) => (
+          <label key={i}>
+            {i + 1}
+            <input
+              value={n}
+              onChange={(e) =>
+                setNumbers((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))
+              }
+              placeholder="+15551234567"
+              inputMode="tel"
+              disabled={loopRunning}
+            />
+          </label>
+        ))}
         <label>
-          Microphone
+          Cool-off (seconds)
+          <input
+            type="number"
+            min="0"
+            max="120"
+            value={coolOffSec}
+            onChange={(e) => setCoolOffSec(e.target.value)}
+            disabled={loopRunning}
+          />
+        </label>
+        <div className="row">
+          <button
+            type="button"
+            disabled={loopRunning || twilio.deviceState !== 'registered'}
+            onClick={runPowerLoop}
+          >
+            Start 5-number loop
+          </button>
+          <button type="button" className="ghost" disabled={!loopRunning} onClick={stopPowerLoop}>
+            Stop loop
+          </button>
+          {loopRunning && (
+            <span className="hint">
+              {loopPhase === 'calling' && `Calling ${loopIndex + 1}/5`}
+              {loopPhase === 'disposition' && `Set disposition for ${loopIndex + 1}/5`}
+              {loopPhase === 'cooloff' && `Cool-off ${coolLeft}s before ${loopIndex + 2}/5`}
+            </span>
+          )}
+        </div>
+        {pendingEnd && (
+          <div className="banner incoming" role="status">
+            <span>
+              {pendingEnd.to} ended ({pendingEnd.reason}
+              {pendingEnd.error ? `: ${pendingEnd.error}` : ''}). Disposition:
+            </span>
+            {DISPOSITIONS.map((d) => (
+              <button key={d} type="button" onClick={() => pickDisposition(d)}>
+                {d}
+              </button>
+            ))}
+          </div>
+        )}
+        {results.length > 0 && (
+          <table className="results">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Number</th>
+                <th>Disposition</th>
+                <th>SDK</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((r, i) => (
+                <tr key={`${r.to}-${r.at}-${i}`}>
+                  <td>{i + 1}</td>
+                  <td className="mono">{r.to}</td>
+                  <td>{r.disposition}</td>
+                  <td>{r.sdk}</td>
+                  <td>{r.at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>3. Audio devices</h2>
+        <p className="hint">
+          Input: <code>setInputDevice</code>. Output: speaker + ringtone both follow this dropdown
+          (Chrome/Edge). Change it while ringing to move the ring off earphones.
+        </p>
+        <label>
+          Input (microphone)
           <select
-            value={selectedOrEmpty(twilio.selectedInput, twilio.audioDevices.input)}
+            value={selectedOrEmpty(twilio.selectedInput, twilio.inputDevices)}
             onChange={(e) => twilio.setInputDevice(e.target.value)}
             disabled={twilio.deviceState !== 'registered'}
           >
-            <option value="">Default</option>
-            {twilio.audioDevices.input.map((d) => (
+            <option value="">Select mic</option>
+            {twilio.inputDevices.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.label}
               </option>
@@ -178,20 +408,23 @@ export default function App() {
           </select>
         </label>
         <label>
-          Speaker
+          Output (speaker)
           <select
-            value={selectedOrEmpty(twilio.selectedOutput, twilio.audioDevices.output)}
+            value={selectedOrEmpty(twilio.selectedOutput, twilio.outputDevices)}
             onChange={(e) => twilio.setOutputDevice(e.target.value)}
-            disabled={twilio.deviceState !== 'registered'}
+            disabled={twilio.deviceState !== 'registered' || !twilio.outputSelectionSupported}
           >
-            <option value="">Default</option>
-            {twilio.audioDevices.output.map((d) => (
+            <option value="">Select speaker</option>
+            {twilio.outputDevices.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.label}
               </option>
             ))}
           </select>
         </label>
+        {!twilio.outputSelectionSupported && twilio.deviceState === 'registered' && (
+          <p className="hint">This browser does not support Twilio output device selection.</p>
+        )}
       </section>
 
       <section className="panel">

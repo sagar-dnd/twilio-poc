@@ -9,6 +9,7 @@ export default defineConfig({
       '/token': 'http://localhost:3001',
       '/health': 'http://localhost:3001',
       '/voice': 'http://localhost:3001',
+      '/demo': 'http://localhost:3001',
     },
   },
 })

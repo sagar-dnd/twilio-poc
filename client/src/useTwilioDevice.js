@@ -1,6 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Device, Call } from '@twilio/voice-sdk'
 
+function formatTwilioErr(err) {
+  if (!err) return ''
+  const inner = err.twilioError || err.originalError || {}
+  const code = err.code ?? inner.code
+  const explanation = err.explanation || inner.explanation || ''
+  const causes = err.causes || inner.causes
+  const bits = [code, err.message || inner.message, explanation]
+  if (Array.isArray(causes) && causes.length) bits.push(causes.join('; '))
+  return bits.filter(Boolean).join(' — ')
+}
+
+function mapTwilioDevices(map) {
+  if (!map) return []
+  return Array.from(map.entries()).map(([key, d]) => ({
+    id: d.deviceId || key,
+    label: d.label || d.deviceId || key,
+  }))
+}
+
 async function fetchToken(identity) {
   const q = new URLSearchParams({ identity })
   const res = await fetch(`/token?${q}`)
@@ -18,13 +37,17 @@ async function fetchToken(identity) {
 export function useTwilioDevice(identity) {
   const deviceRef = useRef(null)
   const callRef = useRef(null)
+  const selectedInputRef = useRef('')
+  const callEndWaiterRef = useRef(null)
   const [deviceState, setDeviceState] = useState('unregistered')
   const [callState, setCallState] = useState(null)
   const [activeCall, setActiveCall] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
-  const [audioDevices, setAudioDevices] = useState({ input: [], output: [] })
+  const [inputDevices, setInputDevices] = useState([])
+  const [outputDevices, setOutputDevices] = useState([])
   const [selectedInput, setSelectedInput] = useState('')
   const [selectedOutput, setSelectedOutput] = useState('')
+  const [outputSelectionSupported, setOutputSelectionSupported] = useState(true)
   const [muted, setMuted] = useState(false)
   const [logs, setLogs] = useState([])
   const [error, setError] = useState(null)
@@ -41,19 +64,33 @@ export function useTwilioDevice(identity) {
     setLogs((prev) => [entry, ...prev].slice(0, 200))
   }, [])
 
-  const refreshAudioDevices = useCallback(async (device) => {
-    try {
-      await device.audio.fetchDevices()
-      const inputs = Array.from(device.audio.availableInputDevices.values())
-      const outputs = Array.from(device.audio.availableOutputDevices.values())
-      setAudioDevices({
-        input: inputs.map((d) => ({ id: d.deviceId, label: d.label || d.deviceId })),
-        output: outputs.map((d) => ({ id: d.deviceId, label: d.label || d.deviceId })),
-      })
-    } catch (e) {
-      log('warn', 'audio.fetchDevices failed', e.message)
-    }
-  }, [log])
+  const refreshAudioDevices = useCallback(
+    (device) => {
+      const audio = device?.audio
+      if (!audio) return { input: [], output: [] }
+      const input = mapTwilioDevices(audio.availableInputDevices)
+      const output = mapTwilioDevices(audio.availableOutputDevices)
+      setInputDevices(input)
+      setOutputDevices(output)
+      setOutputSelectionSupported(Boolean(audio.isOutputSelectionSupported))
+      if (audio.inputDevice?.deviceId) {
+        selectedInputRef.current = audio.inputDevice.deviceId
+        setSelectedInput(audio.inputDevice.deviceId)
+      }
+      const speakers = audio.speakerDevices?.get?.()
+      const activeOut = speakers && speakers.size ? Array.from(speakers)[0]?.deviceId : ''
+      if (activeOut) setSelectedOutput(activeOut)
+      log('info', 'audio devices (sdk)', `mic=${input.length} speaker=${output.length}`)
+      return { input, output }
+    },
+    [log]
+  )
+
+  const finishCall = useCallback((info) => {
+    const wait = callEndWaiterRef.current
+    callEndWaiterRef.current = null
+    wait?.(info)
+  }, [])
 
   const wireCall = useCallback(
     (call, direction) => {
@@ -82,6 +119,11 @@ export function useTwilioDevice(identity) {
         setActiveCall(null)
         setCallState(null)
         setMuted(false)
+        const device = deviceRef.current
+        if (device?.audio?.unsetInputDevice) {
+          device.audio.unsetInputDevice().catch(() => {})
+        }
+        finishCall({ reason: 'disconnect', status: call.status() })
       })
       call.on('cancel', () => {
         log('warn', 'call cancel')
@@ -89,26 +131,30 @@ export function useTwilioDevice(identity) {
         setActiveCall(null)
         setCallState(null)
         setIncomingCall(null)
+        finishCall({ reason: 'cancel', status: call.status() })
       })
       call.on('reject', () => {
         log('warn', 'call reject')
         setIncomingCall(null)
       })
       call.on('error', (err) => {
-        setError(err.message || String(err))
-        log('error', 'call error', err.message || err)
+        const detail = formatTwilioErr(err)
+        setError(detail)
+        log('error', 'call error', detail)
+        finishCall({ reason: 'error', status: call.status(), error: detail })
       })
       call.on('warning', (name) => log('warn', 'call warning', name))
       call.on('warning-cleared', (name) => log('info', 'call warning cleared', name))
     },
-    [log]
+    [log, finishCall]
   )
 
   const register = useCallback(async () => {
     setError(null)
     try {
-      // Mic permission before Device — required for getUserMedia / audio devices
-      await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Mic permission before Device so Twilio AudioHelper maps include labels
+      const preview = await navigator.mediaDevices.getUserMedia({ audio: true })
+      preview.getTracks().forEach((t) => t.stop())
       log('info', 'mic permission granted')
 
       const { token, identity: id, ttl, expiresAt } = await fetchToken(identity)
@@ -132,6 +178,7 @@ export function useTwilioDevice(identity) {
       device.on('registered', () => {
         setDeviceState('registered')
         log('info', 'device registered')
+        refreshAudioDevices(device)
       })
       device.on('unregistered', () => {
         setDeviceState('unregistered')
@@ -142,8 +189,9 @@ export function useTwilioDevice(identity) {
         log('info', 'device registering')
       })
       device.on('error', (err) => {
-        setError(err.message || String(err))
-        log('error', 'device error', `${err.code || ''} ${err.message || err}`)
+        const detail = formatTwilioErr(err)
+        setError(detail)
+        log('error', 'device error', detail)
       })
       device.on('incoming', (call) => {
         log('info', 'incoming call', call.parameters?.From)
@@ -163,10 +211,27 @@ export function useTwilioDevice(identity) {
         }
       })
 
-      device.audio.on('deviceChange', () => refreshAudioDevices(device))
+      device.audio.on('deviceChange', lostActiveDevices => {
+        refreshAudioDevices(device)
+        if (lostActiveDevices?.length) {
+          log('warn', 'lost audio devices', lostActiveDevices.map((d) => d.label || d.deviceId).join(', '))
+        }
+      })
 
       await device.register()
-      await refreshAudioDevices(device)
+      const { input, output } = refreshAudioDevices(device)
+      if (input[0]?.id) {
+        await device.audio.setInputDevice(input[0].id)
+        selectedInputRef.current = input[0].id
+        setSelectedInput(input[0].id)
+        log('info', 'setInputDevice', input[0].label)
+      }
+      if (device.audio.isOutputSelectionSupported && output[0]?.id) {
+        await device.audio.speakerDevices.set(output[0].id)
+        await device.audio.ringtoneDevices.set(output[0].id)
+        setSelectedOutput(output[0].id)
+        log('info', 'output devices set', output[0].label)
+      }
     } catch (e) {
       setError(e.message)
       log('error', 'register failed', e.message)
@@ -185,7 +250,12 @@ export function useTwilioDevice(identity) {
       await device.unregister()
       device.destroy()
       deviceRef.current = null
+      selectedInputRef.current = ''
       setDeviceState('unregistered')
+      setInputDevices([])
+      setOutputDevices([])
+      setSelectedInput('')
+      setSelectedOutput('')
       setActiveCall(null)
       setIncomingCall(null)
       log('info', 'device destroyed')
@@ -195,16 +265,17 @@ export function useTwilioDevice(identity) {
   }, [log])
 
   const connect = useCallback(
-    async ({ to, toClient }) => {
+    async ({ to }) => {
       const device = deviceRef.current
       if (!device) throw new Error('Device not registered')
+      const dest = String(to || '').trim()
+      if (!/^\+[1-9]\d{6,14}$/.test(dest)) throw new Error('To must be E.164, e.g. +15551234567')
       setError(null)
-      const params = {}
-      if (toClient) params.ToClient = toClient
-      else if (to) params.To = to
-      else throw new Error('Need To (E.164) or ToClient')
+      const params = { To: dest }
 
       log('info', 'device.connect', JSON.stringify(params))
+      const inputId = selectedInputRef.current
+      if (inputId) await device.audio.setInputDevice(inputId)
       const call = await device.connect({ params })
       wireCall(call, 'outbound')
       return call
@@ -212,12 +283,32 @@ export function useTwilioDevice(identity) {
     [log, wireCall]
   )
 
+  const connectUntilEnd = useCallback(
+    async ({ to }) => {
+      const ended = new Promise((resolve) => {
+        callEndWaiterRef.current = resolve
+      })
+      try {
+        await connect({ to })
+      } catch (e) {
+        callEndWaiterRef.current = null
+        return { reason: 'failed', error: e.message || String(e) }
+      }
+      return ended
+    },
+    [connect]
+  )
+
   const hangup = useCallback(() => {
     callRef.current?.disconnect()
   }, [])
 
-  const acceptIncoming = useCallback(() => {
-    incomingCall?.accept()
+  const acceptIncoming = useCallback(async () => {
+    if (!incomingCall) return
+    const device = deviceRef.current
+    const inputId = selectedInputRef.current
+    if (device && inputId) await device.audio.setInputDevice(inputId)
+    incomingCall.accept()
     setIncomingCall(null)
     log('info', 'incoming accepted')
   }, [incomingCall, log])
@@ -237,10 +328,11 @@ export function useTwilioDevice(identity) {
   const setInputDevice = useCallback(
     async (deviceId) => {
       const device = deviceRef.current
-      if (!device) return
+      if (!device || !deviceId) return
       await device.audio.setInputDevice(deviceId)
+      selectedInputRef.current = deviceId
       setSelectedInput(deviceId)
-      log('info', 'input device', deviceId)
+      log('info', 'setInputDevice', deviceId)
     },
     [log]
   )
@@ -248,11 +340,11 @@ export function useTwilioDevice(identity) {
   const setOutputDevice = useCallback(
     async (deviceId) => {
       const device = deviceRef.current
-      if (!device) return
-      // ponytail: speakerDevices is a Set-like API; ceiling = single speaker for POC
+      if (!device || !deviceId || !device.audio.isOutputSelectionSupported) return
       await device.audio.speakerDevices.set(deviceId)
+      await device.audio.ringtoneDevices.set(deviceId)
       setSelectedOutput(deviceId)
-      log('info', 'output device', deviceId)
+      log('info', 'output + ringtone', deviceId)
     },
     [log]
   )
@@ -265,15 +357,19 @@ export function useTwilioDevice(identity) {
     log('warn', 'injected invalid token — next action should error')
   }, [log])
 
+  // Destroy only on real page leave — React StrictMode remount must not drop the Device
   useEffect(() => {
-    return () => {
+    const teardown = () => {
       try {
         callRef.current?.disconnect()
         deviceRef.current?.destroy()
+        deviceRef.current = null
       } catch {
-        /* cleanup best-effort */
+        /* best-effort */
       }
     }
+    window.addEventListener('pagehide', teardown)
+    return () => window.removeEventListener('pagehide', teardown)
   }, [])
 
   return {
@@ -281,9 +377,11 @@ export function useTwilioDevice(identity) {
     callState,
     activeCall,
     incomingCall,
-    audioDevices,
+    inputDevices,
+    outputDevices,
     selectedInput,
     selectedOutput,
+    outputSelectionSupported,
     muted,
     logs,
     error,
@@ -291,6 +389,7 @@ export function useTwilioDevice(identity) {
     register,
     unregister,
     connect,
+    connectUntilEnd,
     hangup,
     acceptIncoming,
     rejectIncoming,
