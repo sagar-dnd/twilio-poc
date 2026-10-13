@@ -3,7 +3,8 @@ import { useTwilioDevice } from './useTwilioDevice'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
-const DISPOSITIONS = ['answered', 'no_answer', 'busy', 'voicemail', 'failed']
+const DISPOSITIONS = ['answered', 'no_answer', 'busy', 'voicemail', 'declined', 'unavailable', 'failed']
+const LOG_SOURCES = ['all', 'device', 'call', 'audio', 'network', 'app']
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -25,6 +26,18 @@ export default function App() {
   const dispWaitRef = useRef(null)
 
   const twilio = useTwilioDevice(identity)
+  const [logFilter, setLogFilter] = useState('all')
+  const visibleLogs = logFilter === 'all' ? twilio.logs : twilio.logs.filter((e) => e.source === logFilter)
+
+  async function onPushTransfer(status) {
+    const callSid = twilio.activeCall?.sid
+    if (!callSid) return
+    await fetch('/demo/push-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callSid, content: { type: 'transfer', status } }),
+    })
+  }
 
   // Warn before refresh/close during dialer work (browser shows its own confirm dialog)
   useEffect(() => {
@@ -180,6 +193,9 @@ export default function App() {
           <button type="button" className="ghost" onClick={twilio.rejectIncoming}>
             Reject
           </button>
+          <button type="button" className="ghost" onClick={twilio.ignoreIncoming}>
+            Ignore
+          </button>
         </div>
       )}
 
@@ -298,6 +314,106 @@ export default function App() {
       </section>
 
       <section className="panel">
+        <h2>2b. Call health &amp; scenarios</h2>
+        <div className="row">
+          {twilio.health.reconnecting && <span className="badge warn">Reconnecting…</span>}
+          {twilio.health.micDead && <span className="badge error">Mic silent 5s — check mic</span>}
+          {twilio.health.earlyMedia && twilio.callState === 'ringing' && (
+            <span className="badge">Early media (carrier audio)</span>
+          )}
+          {twilio.health.warnings.map((w) => (
+            <span key={w} className="badge warn">
+              {w}
+            </span>
+          ))}
+        </div>
+        <dl className="meta">
+          <div>
+            <dt>Mic level</dt>
+            <dd>
+              <meter min="0" max="1" value={twilio.health.inputLevel} />
+            </dd>
+          </div>
+          <div>
+            <dt>MOS / RTT / jitter / loss</dt>
+            <dd className="mono">
+              {twilio.health.quality
+                ? `${twilio.health.quality.mos ?? '—'} / ${twilio.health.quality.rtt ?? '—'}ms / ${twilio.health.quality.jitter ?? '—'} / ${twilio.health.quality.packetsLostFraction ?? '—'}%`
+                : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>AMD</dt>
+            <dd>{twilio.health.amd || '—'}</dd>
+          </div>
+          <div>
+            <dt>Carrier leg</dt>
+            <dd>{twilio.health.carrier || '—'}</dd>
+          </div>
+          <div>
+            <dt>Transfer</dt>
+            <dd>{twilio.health.transfer || '—'}</dd>
+          </div>
+          <div>
+            <dt>Last end</dt>
+            <dd className="mono">
+              {twilio.lastEnd
+                ? `${twilio.lastEnd.reason}${twilio.lastEnd.code ? ` ${twilio.lastEnd.code}` : ''} → ${twilio.lastEnd.disposition || '—'}`
+                : '—'}
+            </dd>
+          </div>
+        </dl>
+        <label>
+          No-answer timeout (seconds, 0 = off)
+          <input
+            type="number"
+            min="0"
+            max="120"
+            value={twilio.ringTimeoutSec}
+            onChange={(e) => twilio.setRingTimeoutSec(e.target.value)}
+          />
+        </label>
+        <label>
+          Token TTL override for next Register (seconds, min 60; empty = server default)
+          <input
+            type="number"
+            min="60"
+            value={twilio.shortTtl ?? ''}
+            onChange={(e) => twilio.setShortTtl(e.target.value ? Number(e.target.value) : null)}
+            disabled={twilio.deviceState === 'registered'}
+          />
+        </label>
+        <div className="row">
+          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('ringing')}>
+            Push transfer: ringing
+          </button>
+          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('completed')}>
+            Push transfer: completed
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={!twilio.activeCall}
+            onClick={() => twilio.sendMessage({ type: 'agent-note', text: 'hello from agent' })}
+          >
+            Send message (messageSent)
+          </button>
+        </div>
+        {twilio.missedCalls.length > 0 && (
+          <>
+            <h3>Missed / rejected inbound</h3>
+            <ul>
+              {twilio.missedCalls.map((m, i) => (
+                <li key={`${m.from}-${m.at}-${i}`}>
+                  {m.at} {m.from || 'unknown'} {m.busy ? '(rejected — agent busy)' : '(caller hung up)'}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
+      <section className="panel">
         <h2>2c. Power loop — 5 numbers</h2>
         <p className="hint">
           Calls one E.164 number at a time. After hangup, pick a disposition, then cool-off before the
@@ -351,7 +467,8 @@ export default function App() {
           <div className="banner incoming" role="status">
             <span>
               {pendingEnd.to} ended ({pendingEnd.reason}
-              {pendingEnd.error ? `: ${pendingEnd.error}` : ''}). Disposition:
+              {pendingEnd.error ? `: ${pendingEnd.error}` : ''}).
+              {pendingEnd.disposition && <strong> Suggested: {pendingEnd.disposition}.</strong>} Disposition:
             </span>
             {DISPOSITIONS.map((d) => (
               <button key={d} type="button" onClick={() => pickDisposition(d)}>
@@ -450,12 +567,25 @@ export default function App() {
 
       <section className="panel log-panel">
         <h2>Event log</h2>
+        <div className="row">
+          {LOG_SOURCES.map((src) => (
+            <button
+              key={src}
+              type="button"
+              className={logFilter === src ? '' : 'ghost'}
+              onClick={() => setLogFilter(src)}
+            >
+              {src}
+            </button>
+          ))}
+        </div>
         <ul className="log">
-          {twilio.logs.length === 0 && <li className="empty">No events yet</li>}
-          {twilio.logs.map((e) => (
+          {visibleLogs.length === 0 && <li className="empty">No events yet</li>}
+          {visibleLogs.map((e) => (
             <li key={e.id} data-level={e.level}>
               <time>{e.ts}</time>
               <span className="lvl">{e.level}</span>
+              <span className="lvl">{e.source}</span>
               <span>{e.msg}</span>
               {e.detail && <code>{e.detail}</code>}
             </li>

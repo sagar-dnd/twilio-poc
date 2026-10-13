@@ -274,3 +274,8 @@ button.danger {
     display: none;
   }
 }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #e8eefc; color: #1d3b8a; }
+.badge.warn { background: #fff4d6; color: #7a5200; }
+.badge.error { background: #fde2e2; color: #8a1d1d; }
+meter { width: 120px; }
