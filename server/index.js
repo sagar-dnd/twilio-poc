@@ -140,11 +140,8 @@ app.post("/voice", requireEnv, (req, res) => {
       dial.number(to);
     }
   } else if (!to) {
-    // No To = PreflightTest call (Device.runPreflight sends no params). Keep media up
-    // long enough (~20s) for the SDK to collect samples, then hang up.
-    twiml.say("Network test. Please speak normally for a few seconds.");
-    twiml.pause({ length: 18 });
-    twiml.hangup();
+    // No To = PreflightTest call (Device.runPreflight sends no params) → record/playback flow.
+    twiml.redirect({ method: "POST" }, "/preflight/record");
   } else {
     twiml.say("Invalid destination. Pass To as an E.164 phone number.");
   }
@@ -198,6 +195,43 @@ app.post("/demo/ring-client", requireEnv, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: e.message || String(e) });
   }
+});
+
+/**
+ * PreflightTest audio check — server replacements for Twilio's "Record" and "Playback"
+ * TwiML Bins (twilio.com/docs/voice/sdks/javascript/twiliopreflighttest).
+ * Point TWILIO_PREFLIGHT_TWIML_APP_SID's Voice Request URL at POST {PUBLIC_BASE_URL}/preflight/record.
+ */
+app.post("/preflight/record", requireEnv, (_req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say("Record a message in 3, 2, 1");
+  twiml.record({
+    maxLength: 5,
+    timeout: 3,
+    playBeep: true,
+    action: "/preflight/playback",
+    method: "POST",
+  });
+  // Only reached if <Record> captured nothing (no action request).
+  twiml.say("Did not detect a message to record");
+  twiml.redirect({ method: "POST" }, "/preflight/playback");
+  res.type("text/xml").send(twiml.toString());
+});
+
+app.post("/preflight/playback", requireEnv, (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+  const url = req.body.RecordingUrl;
+  if (url) {
+    twiml.say("You said:");
+    twiml.play(url);
+  } else {
+    twiml.say("No recording was captured.");
+  }
+  twiml.say("Now waiting for a few seconds to gather audio performance metrics.");
+  twiml.pause({ length: 10 });
+  twiml.say("Hanging up now.");
+  twiml.hangup();
+  res.type("text/xml").send(twiml.toString());
 });
 
 /** Push a JSON user-defined message to the browser call leg (Call.on('messageReceived')). */

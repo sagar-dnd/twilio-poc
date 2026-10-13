@@ -92,10 +92,16 @@ quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a 
 **Requirements:**
 - The token is fetched with `/token?purpose=preflight&identity=<id>-preflight`. It uses `TWILIO_PREFLIGHT_TWIML_APP_SID`
   if that's set, otherwise `TWILIO_TWIML_APP_SID`.
-- With the default app, `/voice` sees no `To` and treats the call as a test: it plays a prompt, pauses 18s so samples
-  are collected, then hangs up. **No extra setup is needed** for metrics.
-- Twilio's recommended setup (audio record/playback check): create the "Record" and "Playback" TwiML Bins and a TwiML app
-  pointing at Record, as described in
-  [Twilio.PreflightTest](https://www.twilio.com/docs/voice/sdks/javascript/twiliopreflighttest), then set
-  `TWILIO_PREFLIGHT_TWIML_APP_SID`. To use `fakeMicInput: true` (no real mic), that app **must** echo audio back.
+- With the default app, `/voice` sees no `To` and redirects the call into the record/playback flow below, so the main
+  app works without extra setup.
+- Our server replaces Twilio's "Record" and "Playback" TwiML Bins:
+  - `POST /preflight/record` says "Record a message in 3, 2, 1", then `<Record maxLength=5 timeout=3 action=/preflight/playback>`.
+  - `POST /preflight/playback` plays the `RecordingUrl` back ("You said: …"), pauses 10s for metrics, then hangs up.
+    If nothing was recorded, it says so and still waits.
+- To use a dedicated app: in the Twilio Console go to **TwiML apps → Create**, set the Voice **Request URL** to
+  `{PUBLIC_BASE_URL}/preflight/record` (HTTP POST), and put its SID in `TWILIO_PREFLIGHT_TWIML_APP_SID`.
+  `PUBLIC_BASE_URL` must be a public https URL (e.g. ngrok to port 3001).
+- Playback uses Twilio's recording URL. If your account enforces HTTP auth on media URLs, `<Play>` of the recording will
+  fail, so turn that off for this POC or proxy the media. Test recordings stay in the account until deleted.
+- `fakeMicInput: true` needs an app that echoes audio back; the record/playback flow covers the same audio check with a real mic.
 - Each test is a real Twilio call (~20s of usage) and shows up in the Call logs.
