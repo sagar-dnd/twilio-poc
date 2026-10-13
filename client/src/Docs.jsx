@@ -1,5 +1,3 @@
-import { useEffect, useState } from 'react'
-
 const C = ({ children }) => <code>{children}</code>
 
 /** Each card: scenario, events fired, handling (with real code refs), how to reproduce. Sourced from README + code. */
@@ -218,20 +216,7 @@ const TABS = [
   },
 ]
 
-function tabFromHash() {
-  const id = window.location.hash.replace('#', '')
-  return TABS.some((t) => t.id === id) ? id : TABS[0].id
-}
-
 export default function Docs() {
-  const [active, setActive] = useState(tabFromHash)
-  useEffect(() => {
-    const onHash = () => setActive(tabFromHash())
-    window.addEventListener('hashchange', onHash)
-    return () => window.removeEventListener('hashchange', onHash)
-  }, [])
-  const tab = TABS.find((t) => t.id === active)
-
   return (
     <div className="app docs">
       <header>
@@ -239,34 +224,30 @@ export default function Docs() {
         <h1>Twilio Voice POC — Docs</h1>
         <p className="sub">Scenarios, events fired, how we handle them, and how to reproduce</p>
       </header>
-      <nav className="tabs" role="tablist">
+      <nav className="tabs quicklinks" aria-label="Quick links">
         {TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={t.id === active}
-            className={t.id === active ? 'tab active' : 'tab'}
-            onClick={() => {
-              window.history.replaceState(null, '', `#${t.id}`)
-              setActive(t.id)
-            }}
-          >
+          <a key={t.id} className="tab" href={`#${t.id}`}>
             {t.label}
-          </button>
+          </a>
         ))}
       </nav>
-      {tab.intro && <section className="panel doc-intro">{tab.intro}</section>}
-      {tab.cards.map((c) => (
-        <section key={c.title} className="panel doc-card">
-          <h2>{c.title}</h2>
-          <dl>
-            <dt>What happens / events</dt>
-            <dd>{c.events}</dd>
-            <dt>How we handle it</dt>
-            <dd>{c.handling}</dd>
-            <dt>How to reproduce</dt>
-            <dd>{c.repro}</dd>
-          </dl>
+      {TABS.map((t) => (
+        <section key={t.id} id={t.id} className="doc-section">
+          <h2 className="doc-section-title">{t.label}</h2>
+          {t.intro && <div className="panel doc-intro">{t.intro}</div>}
+          {t.cards.map((c) => (
+            <article key={c.title} className="panel doc-card">
+              <h2>{c.title}</h2>
+              <dl>
+                <dt>What happens / events</dt>
+                <dd>{c.events}</dd>
+                <dt>How we handle it</dt>
+                <dd>{c.handling}</dd>
+                <dt>How to reproduce</dt>
+                <dd>{c.repro}</dd>
+              </dl>
+            </article>
+          ))}
         </section>
       ))}
     </div>

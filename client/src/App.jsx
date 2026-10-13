@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTwilioDevice } from './useTwilioDevice'
 import { usePreflight, summarizeReport } from './usePreflight'
+import { ERROR_CATALOG } from './twilioEvents'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
 const DISPOSITIONS = ['answered', 'no_answer', 'busy', 'voicemail', 'declined', 'unavailable', 'failed']
+const TABS = [
+  ['calling', 'Calling'],
+  ['outcomes', 'Outbound outcomes'],
+  ['power', 'Power loop'],
+  ['preflight', 'Preflight'],
+  ['health', 'Call health'],
+  ['failures', 'Failure cases'],
+]
+const CALLEE_CODES = Object.entries(ERROR_CATALOG).filter(([, v]) => v.kind === 'callee')
 const LOG_SOURCES = ['all', 'preflight', 'device', 'call', 'audio', 'network', 'app']
 
 function sleep(ms) {
@@ -30,7 +40,22 @@ export default function App() {
   const [logFilter, setLogFilter] = useState('all')
   const preflight = usePreflight(identity, twilio.log)
   const pf = summarizeReport(preflight.report)
-  const visibleLogs = logFilter === 'all' ? twilio.logs : twilio.logs.filter((e) => e.source === logFilter)
+  const [logQuery, setLogQuery] = useState('')
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [tab, setTab] = useState(() => {
+    const h = window.location.hash.slice(1)
+    return TABS.some(([id]) => id === h) ? h : 'calling'
+  })
+  const q = logQuery.trim().toLowerCase()
+  const visibleLogs = twilio.logs.filter(
+    (e) =>
+      (logFilter === 'all' || e.source === logFilter) &&
+      (!q || [e.msg, e.detail, e.source, e.level].some((v) => v != null && String(v).toLowerCase().includes(q)))
+  )
+  function selectTab(id) {
+    window.history.replaceState(null, '', `#${id}`)
+    setTab(id)
+  }
 
   async function onPushTransfer(status) {
     const callSid = twilio.activeCall?.sid
@@ -174,7 +199,12 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <a className="nav-link" href="/docs">Docs →</a>
+        <div className="header-actions">
+          <button type="button" className="ghost logs-btn" onClick={() => setLogsOpen(true)}>
+            Logs <span className="count">{twilio.logs.length}</span>
+          </button>
+          <a className="nav-link" href="/docs">Docs →</a>
+        </div>
         <h1>Twilio Voice POC</h1>
         <p className="sub">SD-7331 — Device lifecycle, calls, audio, token refresh &amp; recovery</p>
       </header>
@@ -202,65 +232,6 @@ export default function App() {
           </button>
         </div>
       )}
-
-      <section className="panel">
-        <h2>0. Network test (Preflight)</h2>
-        <p className="hint">
-          Run before going Available (pre-shift) or after network issues. Places a ~20s test call via{' '}
-          <code>Device.runPreflight</code>.
-        </p>
-        <div className="row">
-          <button
-            type="button"
-            disabled={['connecting', 'connected'].includes(preflight.status) || !!twilio.activeCall}
-            onClick={preflight.run}
-          >
-            Run network test
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            disabled={!['connecting', 'connected'].includes(preflight.status)}
-            onClick={preflight.stop}
-          >
-            Stop
-          </button>
-          <span className="badge" data-state={preflight.status}>
-            {preflight.status}
-            {['connecting', 'connected'].includes(preflight.status) && ` · ${preflight.elapsedSec}s`}
-          </span>
-        </div>
-        {preflight.latest && preflight.status === 'connected' && (
-          <p className="hint mono">
-            live: MOS {preflight.latest.mos?.toFixed?.(2) ?? '—'} · RTT {preflight.latest.rtt ?? '—'}ms · jitter{' '}
-            {preflight.latest.jitter ?? '—'} · loss {preflight.latest.packetsLostFraction ?? '—'}%
-          </p>
-        )}
-        {pf && (
-          <dl className="meta">
-            <div><dt>Call quality</dt><dd><strong>{pf.callQuality}</strong></dd></div>
-            <div><dt>MOS (avg)</dt><dd>{pf.mos}</dd></div>
-            <div><dt>RTT (avg)</dt><dd>{pf.rtt}</dd></div>
-            <div><dt>Jitter (avg)</dt><dd>{pf.jitter}</dd></div>
-            <div><dt>Packet loss</dt><dd>{pf.packetLoss}</dd></div>
-            <div><dt>ICE candidate</dt><dd>{pf.iceCandidate}</dd></div>
-            <div><dt>TURN required</dt><dd>{pf.turnRequired}</dd></div>
-            <div><dt>Edge</dt><dd>{pf.edge}</dd></div>
-            <div><dt>Signaling</dt><dd>{pf.signalingMs} ms</dd></div>
-            <div><dt>Test duration</dt><dd>{pf.durationSec}s</dd></div>
-          </dl>
-        )}
-        {preflight.warnings.length > 0 && (
-          <div className="row">
-            {preflight.warnings.map((w, i) => (
-              <span key={`${w.name}-${i}`} className="badge warn" title={w.description}>
-                {w.name}
-              </span>
-            ))}
-          </div>
-        )}
-        {preflight.failure && <p className="badge error">Failed: {preflight.failure}</p>}
-      </section>
 
       <section className="panel">
         <h2>1. Device</h2>
@@ -305,6 +276,30 @@ export default function App() {
           </div>
         </dl>
       </section>
+      <div className="callbar panel" data-active={!!twilio.activeCall}>
+        <span className="badge" data-state={twilio.deviceState}>device: {twilio.deviceState}</span>
+        <span>
+          Call: <strong>{twilio.callState || 'idle'}</strong>
+          {twilio.activeCall && ` · ${twilio.activeCall.direction || ''} · `}
+          {twilio.activeCall && <span className="mono">{twilio.activeCall.sid || ''}</span>}
+        </span>
+        {twilio.health.reconnecting && <span className="badge warn">Reconnecting…</span>}
+        <span className="spacer" />
+        <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={twilio.toggleMute}>
+          {twilio.muted ? 'Unmute' : 'Mute'}
+        </button>
+        <button type="button" className="danger" disabled={!twilio.activeCall} onClick={twilio.hangup}>
+          Hang up
+        </button>
+      </div>
+      <nav className="tabs" role="tablist">
+        {TABS.map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'tab active' : 'tab'} onClick={() => selectTab(id)}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="tab-pane" hidden={tab !== 'calling'}>
 
       <section className="panel">
         <h2>2a. Incoming call</h2>
@@ -375,50 +370,42 @@ export default function App() {
           </div>
         </dl>
       </section>
-
       <section className="panel">
-        <h2>2b. Call health &amp; scenarios</h2>
+        <h2>Missed inbound</h2>
+        {twilio.missedCalls.length === 0 && <p className="hint">None yet. Ring this browser and hang up before answering, or Ignore an incoming call.</p>}
+        {twilio.missedCalls.length > 0 && (
+          <>
+            <h3>Missed inbound</h3>
+            <ul>
+              {twilio.missedCalls.map((m, i) => (
+                <li key={`${m.from}-${m.at}-${i}`}>
+                  {m.at} {m.from || 'unknown'} (caller hung up)
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+      </div>
+      <div className="tab-pane" hidden={tab !== 'outcomes'}>
+      <section className="panel">
+        <h2>Outbound outcomes</h2>
+        <p className="hint">
+          Place a call from the <strong>Calling</strong> tab (or the Power loop); outcome fields update live here. Callee
+          outcomes come from <code>enableImprovedSignalingErrorPrecision</code>; carrier / dial-result / AMD need{' '}
+          <code>PUBLIC_BASE_URL</code>.
+        </p>
         <div className="row">
-          {twilio.health.reconnecting && <span className="badge warn">Reconnecting…</span>}
-          {twilio.health.micDead && <span className="badge error">Mic silent 5s — check mic</span>}
           {twilio.health.earlyMedia && twilio.callState === 'ringing' && (
             <span className="badge">Early media (carrier audio)</span>
           )}
-          {twilio.health.warnings.map((w) => (
-            <span key={w} className="badge warn">
-              {w}
-            </span>
-          ))}
         </div>
         <dl className="meta">
+          <div><dt>Call</dt><dd>{twilio.callState || 'idle'}</dd></div>
+          <div><dt>Carrier leg</dt><dd>{twilio.health.carrier || '—'}</dd></div>
+          <div><dt>AMD</dt><dd>{twilio.health.amd || '—'}</dd></div>
           <div>
-            <dt>Mic level</dt>
-            <dd>
-              <meter min="0" max="1" value={twilio.health.inputLevel} />
-            </dd>
-          </div>
-          <div>
-            <dt>MOS / RTT / jitter / loss</dt>
-            <dd className="mono">
-              {twilio.health.quality
-                ? `${twilio.health.quality.mos ?? '—'} / ${twilio.health.quality.rtt ?? '—'}ms / ${twilio.health.quality.jitter ?? '—'} / ${twilio.health.quality.packetsLostFraction ?? '—'}%`
-                : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt>AMD</dt>
-            <dd>{twilio.health.amd || '—'}</dd>
-          </div>
-          <div>
-            <dt>Carrier leg</dt>
-            <dd>{twilio.health.carrier || '—'}</dd>
-          </div>
-          <div>
-            <dt>Transfer</dt>
-            <dd>{twilio.health.transfer || '—'}</dd>
-          </div>
-          <div>
-            <dt>Last end</dt>
+            <dt>Last end → suggested disposition</dt>
             <dd className="mono">
               {twilio.lastEnd
                 ? `${twilio.lastEnd.reason}${twilio.lastEnd.code ? ` ${twilio.lastEnd.code}` : ''} → ${twilio.lastEnd.disposition || '—'}`
@@ -436,46 +423,18 @@ export default function App() {
             onChange={(e) => twilio.setRingTimeoutSec(e.target.value)}
           />
         </label>
-        <label>
-          Token TTL override for next Register (seconds, min 60; empty = server default)
-          <input
-            type="number"
-            min="60"
-            value={twilio.shortTtl ?? ''}
-            onChange={(e) => twilio.setShortTtl(e.target.value ? Number(e.target.value) : null)}
-            disabled={twilio.deviceState === 'registered'}
-          />
-        </label>
-        <div className="row">
-          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('ringing')}>
-            Push transfer: ringing
-          </button>
-          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('completed')}>
-            Push transfer: completed
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            disabled={!twilio.activeCall}
-            onClick={() => twilio.sendMessage({ type: 'agent-note', text: 'hello from agent' })}
-          >
-            Send message (messageSent)
-          </button>
-        </div>
-        {twilio.missedCalls.length > 0 && (
-          <>
-            <h3>Missed inbound</h3>
-            <ul>
-              {twilio.missedCalls.map((m, i) => (
-                <li key={`${m.from}-${m.at}-${i}`}>
-                  {m.at} {m.from || 'unknown'} (caller hung up)
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+        <h3>Callee error codes → disposition</h3>
+        <table className="results">
+          <thead><tr><th>Code</th><th>Meaning</th><th>Disposition</th></tr></thead>
+          <tbody>
+            {CALLEE_CODES.map(([code, v]) => (
+              <tr key={code}><td className="mono">{code}</td><td>{v.label}</td><td>{v.disposition}</td></tr>
+            ))}
+          </tbody>
+        </table>
       </section>
-
+      </div>
+      <div className="tab-pane" hidden={tab !== 'power'}>
       <section className="panel">
         <h2>2c. Power loop — 5 numbers</h2>
         <p className="hint">
@@ -565,7 +524,156 @@ export default function App() {
           </table>
         )}
       </section>
+      </div>
+      <div className="tab-pane" hidden={tab !== 'preflight'}>
+      <section className="panel">
+        <h2>0. Network test (Preflight)</h2>
+        <p className="hint">
+          Run before going Available (pre-shift) or after network issues. Places a ~20s test call via{' '}
+          <code>Device.runPreflight</code>.
+        </p>
+        <div className="row">
+          <button
+            type="button"
+            disabled={['connecting', 'connected'].includes(preflight.status) || !!twilio.activeCall}
+            onClick={preflight.run}
+          >
+            Run network test
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={!['connecting', 'connected'].includes(preflight.status)}
+            onClick={preflight.stop}
+          >
+            Stop
+          </button>
+          <span className="badge" data-state={preflight.status}>
+            {preflight.status}
+            {['connecting', 'connected'].includes(preflight.status) && ` · ${preflight.elapsedSec}s`}
+          </span>
+        </div>
+        {preflight.latest && preflight.status === 'connected' && (
+          <p className="hint mono">
+            live: MOS {preflight.latest.mos?.toFixed?.(2) ?? '—'} · RTT {preflight.latest.rtt ?? '—'}ms · jitter{' '}
+            {preflight.latest.jitter ?? '—'} · loss {preflight.latest.packetsLostFraction ?? '—'}%
+          </p>
+        )}
+        {pf && (
+          <dl className="meta">
+            <div><dt>Call quality</dt><dd><strong>{pf.callQuality}</strong></dd></div>
+            <div><dt>MOS (avg)</dt><dd>{pf.mos}</dd></div>
+            <div><dt>RTT (avg)</dt><dd>{pf.rtt}</dd></div>
+            <div><dt>Jitter (avg)</dt><dd>{pf.jitter}</dd></div>
+            <div><dt>Packet loss</dt><dd>{pf.packetLoss}</dd></div>
+            <div><dt>ICE candidate</dt><dd>{pf.iceCandidate}</dd></div>
+            <div><dt>TURN required</dt><dd>{pf.turnRequired}</dd></div>
+            <div><dt>Edge</dt><dd>{pf.edge}</dd></div>
+            <div><dt>Signaling</dt><dd>{pf.signalingMs} ms</dd></div>
+            <div><dt>Test duration</dt><dd>{pf.durationSec}s</dd></div>
+          </dl>
+        )}
+        {preflight.warnings.length > 0 && (
+          <div className="row">
+            {preflight.warnings.map((w, i) => (
+              <span key={`${w.name}-${i}`} className="badge warn" title={w.description}>
+                {w.name}
+              </span>
+            ))}
+          </div>
+        )}
+        {preflight.failure && <p className="badge error">Failed: {preflight.failure}</p>}
+      </section>
+      </div>
+      <div className="tab-pane" hidden={tab !== 'health'}>
 
+      <section className="panel">
+        <h2>2b. Call health &amp; scenarios</h2>
+        <div className="row">
+          {twilio.health.reconnecting && <span className="badge warn">Reconnecting…</span>}
+          {twilio.health.micDead && <span className="badge error">Mic silent 5s — check mic</span>}
+          {twilio.health.earlyMedia && twilio.callState === 'ringing' && (
+            <span className="badge">Early media (carrier audio)</span>
+          )}
+          {twilio.health.warnings.map((w) => (
+            <span key={w} className="badge warn">
+              {w}
+            </span>
+          ))}
+        </div>
+        <dl className="meta">
+          <div>
+            <dt>Mic level</dt>
+            <dd>
+              <meter min="0" max="1" value={twilio.health.inputLevel} />
+            </dd>
+          </div>
+          <div>
+            <dt>MOS / RTT / jitter / loss</dt>
+            <dd className="mono">
+              {twilio.health.quality
+                ? `${twilio.health.quality.mos ?? '—'} / ${twilio.health.quality.rtt ?? '—'}ms / ${twilio.health.quality.jitter ?? '—'} / ${twilio.health.quality.packetsLostFraction ?? '—'}%`
+                : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt>AMD</dt>
+            <dd>{twilio.health.amd || '—'}</dd>
+          </div>
+          <div>
+            <dt>Carrier leg</dt>
+            <dd>{twilio.health.carrier || '—'}</dd>
+          </div>
+          <div>
+            <dt>Transfer</dt>
+            <dd>{twilio.health.transfer || '—'}</dd>
+          </div>
+          <div>
+            <dt>Last end</dt>
+            <dd className="mono">
+              {twilio.lastEnd
+                ? `${twilio.lastEnd.reason}${twilio.lastEnd.code ? ` ${twilio.lastEnd.code}` : ''} → ${twilio.lastEnd.disposition || '—'}`
+                : '—'}
+            </dd>
+          </div>
+        </dl>
+        <label>
+          No-answer timeout (seconds, 0 = off)
+          <input
+            type="number"
+            min="0"
+            max="120"
+            value={twilio.ringTimeoutSec}
+            onChange={(e) => twilio.setRingTimeoutSec(e.target.value)}
+          />
+        </label>
+        <label>
+          Token TTL override for next Register (seconds, min 60; empty = server default)
+          <input
+            type="number"
+            min="60"
+            value={twilio.shortTtl ?? ''}
+            onChange={(e) => twilio.setShortTtl(e.target.value ? Number(e.target.value) : null)}
+            disabled={twilio.deviceState === 'registered'}
+          />
+        </label>
+        <div className="row">
+          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('ringing')}>
+            Push transfer: ringing
+          </button>
+          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={() => onPushTransfer('completed')}>
+            Push transfer: completed
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={!twilio.activeCall}
+            onClick={() => twilio.sendMessage({ type: 'agent-note', text: 'hello from agent' })}
+          >
+            Send message (messageSent)
+          </button>
+        </div>
+      </section>
       <section className="panel">
         <h2>3. Audio devices</h2>
         <p className="hint">
@@ -606,7 +714,8 @@ export default function App() {
           <p className="hint">This browser does not support Twilio output device selection.</p>
         )}
       </section>
-
+      </div>
+      <div className="tab-pane" hidden={tab !== 'failures'}>
       <section className="panel">
         <h2>4. Failure / recovery demos</h2>
         <p className="hint">
@@ -627,9 +736,20 @@ export default function App() {
           </button>
         </div>
       </section>
-
-      <section className="panel log-panel">
-        <h2>Event log</h2>
+      </div>
+      {logsOpen && <div className="sheet-backdrop" onClick={() => setLogsOpen(false)} />}
+      <aside className={logsOpen ? 'sheet open' : 'sheet'} aria-hidden={!logsOpen}>
+        <div className="sheet-head">
+          <h2>Event log</h2>
+          <button type="button" className="ghost" onClick={twilio.clearLogs}>Clear</button>
+          <button type="button" className="ghost" onClick={() => setLogsOpen(false)}>Close</button>
+        </div>
+        <input
+          className="sheet-search"
+          value={logQuery}
+          onChange={(e) => setLogQuery(e.target.value)}
+          placeholder="Search message / event / code…"
+        />
         <div className="row">
           {LOG_SOURCES.map((src) => (
             <button
@@ -642,8 +762,9 @@ export default function App() {
             </button>
           ))}
         </div>
+        <p className="hint">{visibleLogs.length} / {twilio.logs.length} events</p>
         <ul className="log">
-          {visibleLogs.length === 0 && <li className="empty">No events yet</li>}
+          {visibleLogs.length === 0 && <li className="empty">No events</li>}
           {visibleLogs.map((e) => (
             <li key={e.id} data-level={e.level}>
               <time>{e.ts}</time>
@@ -654,7 +775,7 @@ export default function App() {
             </li>
           ))}
         </ul>
-      </section>
+      </aside>
     </div>
   )
 }
