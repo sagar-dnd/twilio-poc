@@ -700,6 +700,7 @@ export function useTwilioDevice(identity) {
     setInputDevice,
     setOutputDevice,
     simulateExpiredToken,
+    log,
     clearLogs: () => setLogs([]),
     clearError: () => setError(null),
   }

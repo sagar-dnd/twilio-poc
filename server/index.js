@@ -12,6 +12,7 @@ const {
   TWILIO_API_SECRET,
   TWILIO_TWIML_APP_SID,
   TWILIO_PHONE_NUMBER,
+  TWILIO_PREFLIGHT_TWIML_APP_SID,
   DEFAULT_INBOUND_IDENTITY = "agent-poc",
   PORT = 3001,
   TOKEN_TTL_SECONDS = 3600,
@@ -88,7 +89,10 @@ app.get("/token", requireEnv, (req, res) => {
 
   token.addGrant(
     new VoiceGrant({
-      outgoingApplicationSid: TWILIO_TWIML_APP_SID,
+      // ?purpose=preflight → optional dedicated echo/Record TwiML app for PreflightTest
+      outgoingApplicationSid:
+        (req.query.purpose === "preflight" && TWILIO_PREFLIGHT_TWIML_APP_SID) ||
+        TWILIO_TWIML_APP_SID,
       incomingAllow: true,
     }),
   );
@@ -135,6 +139,12 @@ app.post("/voice", requireEnv, (req, res) => {
     } else {
       dial.number(to);
     }
+  } else if (!to) {
+    // No To = PreflightTest call (Device.runPreflight sends no params). Keep media up
+    // long enough (~20s) for the SDK to collect samples, then hang up.
+    twiml.say("Network test. Please speak normally for a few seconds.");
+    twiml.pause({ length: 18 });
+    twiml.hangup();
   } else {
     twiml.say("Invalid destination. Pass To as an E.164 phone number.");
   }

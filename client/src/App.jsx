@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTwilioDevice } from './useTwilioDevice'
+import { usePreflight, summarizeReport } from './usePreflight'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
 const DISPOSITIONS = ['answered', 'no_answer', 'busy', 'voicemail', 'declined', 'unavailable', 'failed']
-const LOG_SOURCES = ['all', 'device', 'call', 'audio', 'network', 'app']
+const LOG_SOURCES = ['all', 'preflight', 'device', 'call', 'audio', 'network', 'app']
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -27,6 +28,8 @@ export default function App() {
 
   const twilio = useTwilioDevice(identity)
   const [logFilter, setLogFilter] = useState('all')
+  const preflight = usePreflight(identity, twilio.log)
+  const pf = summarizeReport(preflight.report)
   const visibleLogs = logFilter === 'all' ? twilio.logs : twilio.logs.filter((e) => e.source === logFilter)
 
   async function onPushTransfer(status) {
@@ -198,6 +201,65 @@ export default function App() {
           </button>
         </div>
       )}
+
+      <section className="panel">
+        <h2>0. Network test (Preflight)</h2>
+        <p className="hint">
+          Run before going Available (pre-shift) or after network issues. Places a ~20s test call via{' '}
+          <code>Device.runPreflight</code>.
+        </p>
+        <div className="row">
+          <button
+            type="button"
+            disabled={['connecting', 'connected'].includes(preflight.status) || !!twilio.activeCall}
+            onClick={preflight.run}
+          >
+            Run network test
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={!['connecting', 'connected'].includes(preflight.status)}
+            onClick={preflight.stop}
+          >
+            Stop
+          </button>
+          <span className="badge" data-state={preflight.status}>
+            {preflight.status}
+            {['connecting', 'connected'].includes(preflight.status) && ` · ${preflight.elapsedSec}s`}
+          </span>
+        </div>
+        {preflight.latest && preflight.status === 'connected' && (
+          <p className="hint mono">
+            live: MOS {preflight.latest.mos?.toFixed?.(2) ?? '—'} · RTT {preflight.latest.rtt ?? '—'}ms · jitter{' '}
+            {preflight.latest.jitter ?? '—'} · loss {preflight.latest.packetsLostFraction ?? '—'}%
+          </p>
+        )}
+        {pf && (
+          <dl className="meta">
+            <div><dt>Call quality</dt><dd><strong>{pf.callQuality}</strong></dd></div>
+            <div><dt>MOS (avg)</dt><dd>{pf.mos}</dd></div>
+            <div><dt>RTT (avg)</dt><dd>{pf.rtt}</dd></div>
+            <div><dt>Jitter (avg)</dt><dd>{pf.jitter}</dd></div>
+            <div><dt>Packet loss</dt><dd>{pf.packetLoss}</dd></div>
+            <div><dt>ICE candidate</dt><dd>{pf.iceCandidate}</dd></div>
+            <div><dt>TURN required</dt><dd>{pf.turnRequired}</dd></div>
+            <div><dt>Edge</dt><dd>{pf.edge}</dd></div>
+            <div><dt>Signaling</dt><dd>{pf.signalingMs} ms</dd></div>
+            <div><dt>Test duration</dt><dd>{pf.durationSec}s</dd></div>
+          </dl>
+        )}
+        {preflight.warnings.length > 0 && (
+          <div className="row">
+            {preflight.warnings.map((w, i) => (
+              <span key={`${w.name}-${i}`} className="badge warn" title={w.description}>
+                {w.name}
+              </span>
+            ))}
+          </div>
+        )}
+        {preflight.failure && <p className="badge error">Failed: {preflight.failure}</p>}
+      </section>
 
       <section className="panel">
         <h2>1. Device</h2>

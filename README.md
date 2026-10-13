@@ -78,3 +78,24 @@ Error codes checked against `twilio.com/docs/api/errors/<code>` and the 2.0 chan
 31003→53405, 31901→53000). In SDK v2, mic denied is **31401**; **31208** is the v1 code.
 
 `messageReceived` scenarios need Twilio to reach the server: run `ngrok http 3001` and set `PUBLIC_BASE_URL` in `.env`.
+
+## Network test (PreflightTest)
+
+Panel **0** runs `Device.runPreflight(token, options)` (`client/src/usePreflight.js`). It handles the `connected`,
+`sample`, `warning`, `completed` and `failed` events, and shows: call quality rating (`excellent` / `great` / `good` /
+`fair` / `degraded`), average MOS / RTT / jitter, packet loss, the selected ICE candidate (type / protocol / network
+type), whether TURN was required, edge, signaling time, warnings and errors. **Stop** raises `failed` with 31008.
+
+**When to run it:** pre-shift, before the agent goes Available; after a network issue (reconnecting or dropped calls,
+quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a live call (the button is disabled then).
+
+**Requirements:**
+- The token is fetched with `/token?purpose=preflight&identity=<id>-preflight`. It uses `TWILIO_PREFLIGHT_TWIML_APP_SID`
+  if that's set, otherwise `TWILIO_TWIML_APP_SID`.
+- With the default app, `/voice` sees no `To` and treats the call as a test: it plays a prompt, pauses 18s so samples
+  are collected, then hangs up. **No extra setup is needed** for metrics.
+- Twilio's recommended setup (audio record/playback check): create the "Record" and "Playback" TwiML Bins and a TwiML app
+  pointing at Record, as described in
+  [Twilio.PreflightTest](https://www.twilio.com/docs/voice/sdks/javascript/twiliopreflighttest), then set
+  `TWILIO_PREFLIGHT_TWIML_APP_SID`. To use `fakeMicInput: true` (no real mic), that app **must** echo audio back.
+- Each test is a real Twilio call (~20s of usage) and shows up in the Call logs.
