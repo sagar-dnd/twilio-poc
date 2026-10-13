@@ -279,3 +279,67 @@ button.danger {
 .badge.warn { background: #fff4d6; color: #7a5200; }
 .badge.error { background: #fde2e2; color: #8a1d1d; }
 meter { width: 120px; }
+
+/* Docs route */
+.nav-link {
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.nav-link:hover {
+  text-decoration: underline;
+}
+header .nav-link {
+  float: right;
+}
+.docs header .nav-link {
+  float: none;
+  display: inline-block;
+  margin-bottom: 0.5rem;
+}
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.tab {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.doc-intro,
+.doc-card {
+  font-size: 0.88rem;
+}
+.doc-intro p:first-child {
+  margin-top: 0;
+}
+.doc-card dl {
+  margin: 0;
+}
+.doc-card dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 0.6rem;
+}
+.doc-card dd {
+  margin: 0.2rem 0 0;
+}
+.docs code {
+  font-size: 0.82em;
+  background: #0f1419;
+  padding: 0 0.25em;
+  border-radius: 4px;
+}

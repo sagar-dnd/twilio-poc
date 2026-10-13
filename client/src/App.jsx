@@ -174,6 +174,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
+        <a className="nav-link" href="/docs">Docs →</a>
         <h1>Twilio Voice POC</h1>
         <p className="sub">SD-7331 — Device lifecycle, calls, audio, token refresh &amp; recovery</p>
       </header>
