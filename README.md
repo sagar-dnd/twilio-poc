@@ -42,8 +42,8 @@ See [FINDINGS.md](./FINDINGS.md) for how this maps to Power / Dynamic / Predicti
 ## Event handling scenarios (Voice JS SDK v2)
 
 Device options (`client/src/useTwilioDevice.js`): `tokenRefreshMs: 30000`, `maxCallSignalingTimeoutMs: 30000`,
-`enableImprovedSignalingErrorPrecision: true`, `allowIncomingWhileBusy: true` (so we can explicitly reject
-callbacks while busy), `closeProtection`. Error catalog + disposition mapping live in `client/src/twilioEvents.js`.
+`enableImprovedSignalingErrorPrecision: true`, `allowIncomingWhileBusy: true` (incoming calls always ring,
+even mid-call), `closeProtection`. Error catalog + disposition mapping live in `client/src/twilioEvents.js`.
 
 **Device events handled:** `registering`, `registered`, `unregistered`, `error`, `incoming`, `tokenWillExpire`, `destroyed`
 (+ `device.audio` `deviceChange`).
@@ -64,7 +64,7 @@ The Event log panel can be filtered by source (device / call / audio / network /
 | Agent hangup | `disconnect` after `hangup()` | Disposition "Connected (agent hangup)" | Answer, click Hang up |
 | No answer timeout | client timer → `disconnect`; `<Dial action>` `no-answer` | Agent-side ring cap (2b input, default 30s) → "No answer" | Dial a phone and let it ring |
 | Busy / declined / unavailable | `error` 31486 / 31603 / 31480 (improved precision) | Mapped to Busy / Declined / Unavailable dispositions | Reject on the phone (declined), call a line already on a call (busy), phone off / airplane mode (unavailable) |
-| Inbound callback while busy | `device.incoming` while a call is active | Auto `call.reject()`; listed under Missed/rejected | During an outbound call, click "Ring this browser" or call the Twilio number |
+| Inbound callback while busy | `device.incoming` while a call is active | Always rings (no auto-reject). Agent can Accept (ends current call), Reject, or Ignore; a caller hang-up goes to Missed | During an outbound call, click "Ring this browser" or call the Twilio number |
 | Inbound cancel (missed) | `call.cancel` | Remove incoming banner, add to Missed list, disposition "Missed" | Ring the browser and hang up from caller before accepting |
 | Inbound ignore | `call.ignore()` | Stops local ringing; caller later cancels → Missed | Click Ignore on the incoming banner |
 | Early media (carrier messages) | `ringing(hasEarlyMedia=true)` | "Early media" badge; audio plays via `answerOnBridge` | Dial an invalid/disconnected number that plays a carrier announcement |

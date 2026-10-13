@@ -399,15 +399,21 @@ export function useTwilioDevice(identity) {
       device.on('incoming', (call) => {
         const from = call.parameters?.From
         const busy = Boolean(callRef.current)
+        log('info', busy ? 'incoming while on a call (ringing)' : 'incoming', from, 'device')
+        setIncomingCall(call)
         if (busy) {
-          // Inbound callback while agent is on a dial: reject so it routes to voicemail/fallback.
-          log('warn', 'incoming while busy — rejecting', from, 'device')
-          call.on('reject', () => setMissedCalls((m) => [{ from, at: new Date().toLocaleTimeString(), busy: true }, ...m].slice(0, 20)))
-          call.reject()
+          // Always ring; agent decides. Don't replace the active call until accept.
+          call.on('cancel', () => {
+            log('warn', 'cancel (caller hung up before answer)', from, 'call')
+            setIncomingCall((cur) => (cur === call ? null : cur))
+            setMissedCalls((m) => [{ from, at: new Date().toLocaleTimeString() }, ...m].slice(0, 20))
+          })
+          call.on('reject', () => {
+            log('warn', 'reject', from, 'call')
+            setIncomingCall((cur) => (cur === call ? null : cur))
+          })
           return
         }
-        log('info', 'incoming', from, 'device')
-        setIncomingCall(call)
         wireCall(call, 'inbound')
       })
       device.on('tokenWillExpire', () => {
@@ -536,9 +542,19 @@ export function useTwilioDevice(identity) {
     const device = deviceRef.current
     const inputId = selectedInputRef.current
     if (device && inputId) await device.audio.setInputDevice(inputId)
+    const current = callRef.current
+    if (current && current !== incomingCall) {
+      // Accepting while on a call ends the current call (one active call at a time).
+      log('warn', 'accepting incoming — ending current call', current.parameters?.CallSid, 'call')
+      callMetaRef.current.hungUpBy = 'agent'
+      current.disconnect()
+      incomingCall.removeAllListeners('cancel')
+      incomingCall.removeAllListeners('reject')
+      wireCall(incomingCall, 'inbound')
+    }
     incomingCall.accept()
     setIncomingCall(null)
-  }, [incomingCall])
+  }, [incomingCall, log, wireCall])
 
   const rejectIncoming = useCallback(() => {
     incomingCall?.reject()

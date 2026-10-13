@@ -401,11 +401,11 @@ export default function App() {
         </div>
         {twilio.missedCalls.length > 0 && (
           <>
-            <h3>Missed / rejected inbound</h3>
+            <h3>Missed inbound</h3>
             <ul>
               {twilio.missedCalls.map((m, i) => (
                 <li key={`${m.from}-${m.at}-${i}`}>
-                  {m.at} {m.from || 'unknown'} {m.busy ? '(rejected — agent busy)' : '(caller hung up)'}
+                  {m.at} {m.from || 'unknown'} (caller hung up)
                 </li>
               ))}
             </ul>
