@@ -172,7 +172,9 @@ select {
   padding: 0.7rem 0.85rem;
   background: var(--surface);
   color: var(--text);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 input:hover:not(:disabled),
 select:hover:not(:disabled) {
@@ -202,7 +204,10 @@ button {
   background: var(--brand-gradient);
   color: #fff;
   cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.15s, background 0.15s;
+  transition:
+    transform 0.1s,
+    box-shadow 0.15s,
+    background 0.15s;
 }
 button:hover:not(:disabled) {
   background: var(--brand-active);
@@ -212,7 +217,9 @@ button:active:not(:disabled) {
 }
 button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--text);
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px var(--text);
 }
 button:disabled {
   opacity: 0.4;
@@ -674,7 +681,7 @@ details summary {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 640px) {
-    .header-actions {
+  .header-actions {
     width: 100%;
     justify-content: flex-end;
   }

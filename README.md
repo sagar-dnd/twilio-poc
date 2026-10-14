@@ -108,6 +108,42 @@ quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a 
 - `fakeMicInput: true` needs an app that echoes audio back; the record/playback flow covers the same audio check with a real mic.
 - Each test is a real Twilio call (~20s of usage) and shows up in the Call logs.
 
+## Architecture
+
+```
+client/src/
+  main.jsx               # / → App, /docs → DocsPage
+  App.jsx                # thin shell: shared Device, tab state, layout
+  components/
+    Header, ErrorBanner, IncomingBanner, DevicePanel, Tabs, CallModal, LogsDrawer, Badge, Meter, DocsPage
+    tabs/                # one file per tab
+      CallingTab, OutboundOutcomesTab, PowerLoopTab, PreflightTab,
+      CallHealthTab, DeviceManagementTab, ConferenceCallTab, FailureCasesTab
+  hooks/
+    useTwilioDevice.js   # Device lifecycle, calls, token refresh (public API used by every tab)
+    twilio/              # internal pieces: useEventLog, useAudioDevices, useReRegister, useWakeRecovery
+    usePreflight, usePowerLoop, useCallHangup, useLeaveWarning,
+    useDraggable, useMicMeter, useSpeakerTest, useHashTab
+  lib/
+    api.js               # every fetch to the server
+    constants.js         # tabs, regexes, timings, limits
+    twilioEvents.js      # error catalog, dispositions, backoff, message parsing
+    audioMeters.js, callHealth.js
+server/
+  index.js               # mounts routers, /health, listen
+  config.js              # dotenv + env validation (missing list, requireEnv, baseUrl)
+  lib/                   # twilioClient, identity, pushToClient
+  routes/                # token, voice, preflight, demo, conference (/agent-drop/*)
+```
+
+**Data flow**
+
+1. `DevicePanel` → `useTwilioDevice.register()` → `lib/api.fetchToken` → `GET /token` → `new Device(token)`.
+2. Outbound: `device.connect()` → Twilio → TwiML App → `POST /voice` (`routes/voice.js`) → `<Dial>` (or a `<Conference>` for the Conference call tab).
+3. Inbound: PSTN → `/voice/inbound` → `<Client>` → Device `incoming` → `IncomingBanner`.
+4. Status/AMD/conference callbacks hit the server, which pushes user-defined messages to the call (`lib/pushToClient`); the hook logs them and tabs render from its state.
+5. Every SDK/server event lands in the hook's event log → `LogsDrawer`.
+
 ## Official Twilio docs
 
 Also linked from the in-app docs page (`/docs`, References section).

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-
-const E164 = /^\+[1-9]\d{6,14}$/
+import { getConferenceConfig, getConferenceStatus } from '../../lib/api'
+import { CONFERENCE_POLL_MS, E164 } from '../../lib/constants'
 
 const STEPS = [
   ['agent-joined', 'Agent joined conference'],
@@ -13,10 +13,15 @@ const STEPS = [
 ]
 
 /**
- * Agent drop (Wi-Fi) demo. Agent + customer are separate legs in a <Conference>
- * so the customer survives the agent's leg dropping (server/index.js /agent-drop/*).
+ * Conference call (agent Wi-Fi drop) demo. Agent and customer are separate legs in a
+ * <Conference>, so the customer survives the agent's leg dropping (server routes/conference.js).
+ * @param {{
+ *   twilio: import('../../hooks/useTwilioDevice').TwilioDevice,
+ *   room: string | null,
+ *   setRoom: (room: string) => void,
+ * }} props
  */
-export default function AgentDrop({ twilio, room, setRoom }) {
+export default function ConferenceCallTab({ twilio, room, setRoom }) {
   const [to, setTo] = useState('')
   const [config, setConfig] = useState(null)
   const [message, setMessage] = useState('')
@@ -27,8 +32,7 @@ export default function AgentDrop({ twilio, room, setRoom }) {
   const log = twilio.log
 
   useEffect(() => {
-    fetch('/agent-drop/config')
-      .then((r) => r.json())
+    getConferenceConfig()
       .then((c) => {
         setConfig(c)
         setMessage(c.message)
@@ -43,10 +47,8 @@ export default function AgentDrop({ twilio, room, setRoom }) {
     let stop = false
     const tick = async () => {
       try {
-        const r = await fetch(`/agent-drop/status?room=${room}`)
-        if (!r.ok) return
-        const s = await r.json()
-        if (stop) return
+        const s = await getConferenceStatus(room)
+        if (!s || stop) return
         setSession(s)
         s.timeline.slice(seenRef.current).forEach((e) => {
           const warn = /unexpected|failed|message/.test(e.event)
@@ -58,7 +60,7 @@ export default function AgentDrop({ twilio, room, setRoom }) {
       }
     }
     tick()
-    const t = setInterval(tick, 1000)
+    const t = setInterval(tick, CONFERENCE_POLL_MS)
     return () => {
       stop = true
       clearInterval(t)
@@ -111,18 +113,24 @@ export default function AgentDrop({ twilio, room, setRoom }) {
           </div>
         )}
         <p className="hint">
-          With a plain <code>&lt;Dial&gt;&lt;Number&gt;</code>, the customer leg dies with the browser leg. Here the agent and
-          customer join a <code>&lt;Conference&gt;</code>. If the agent leaves unexpectedly, the server redirects the customer
-          to hold music (grace) and/or the message below, then hangs up.
+          With a plain <code>&lt;Dial&gt;&lt;Number&gt;</code>, the customer leg dies with the browser leg. Here the
+          agent and customer join a <code>&lt;Conference&gt;</code>. If the agent leaves unexpectedly, the server
+          redirects the customer to hold music (grace) and/or the message below, then hangs up.
         </p>
         <ol className="hint">
-          <li>Register the Device, enter the customer's number, click <strong>Start resilient call</strong>.</li>
-          <li>After the customer answers, <strong>turn off Wi-Fi</strong> on this machine.</li>
           <li>
-            The agent leg drops once Twilio gives up on it (the SDK first tries to reconnect for up to ~30s). The customer then
-            hears hold music for the grace time (if set), then the message.
+            Register the Device, enter the customer's number, click <strong>Start resilient call</strong>.
           </li>
-          <li>With a grace time, turn Wi-Fi back on and click <strong>Rejoin</strong> before it runs out.</li>
+          <li>
+            After the customer answers, <strong>turn off Wi-Fi</strong> on this machine.
+          </li>
+          <li>
+            The agent leg drops once Twilio gives up on it (the SDK first tries to reconnect for up to ~30s). The
+            customer then hears hold music for the grace time (if set), then the message.
+          </li>
+          <li>
+            With a grace time, turn Wi-Fi back on and click <strong>Rejoin</strong> before it runs out.
+          </li>
         </ol>
         <label>
           Customer number (E.164)
@@ -155,8 +163,8 @@ export default function AgentDrop({ twilio, room, setRoom }) {
           {room && <span className="hint mono">room {room}</span>}
         </div>
         <p className="hint">
-          Hang up from the call window (it tells the server the hang-up is intentional, so the customer is not played the
-          message).
+          Hang up from the call window (it tells the server the hang-up is intentional, so the customer is not played
+          the message).
         </p>
       </section>
       <section className="panel">
@@ -173,8 +181,14 @@ export default function AgentDrop({ twilio, room, setRoom }) {
               ))}
             </ul>
             <dl className="meta">
-              <div><dt>State</dt><dd>{session.state}</dd></div>
-              <div><dt>Outcome</dt><dd>{session.outcome || '—'}</dd></div>
+              <div>
+                <dt>State</dt>
+                <dd>{session.state}</dd>
+              </div>
+              <div>
+                <dt>Outcome</dt>
+                <dd>{session.outcome || '—'}</dd>
+              </div>
             </dl>
             <details>
               <summary className="hint">Raw server timeline</summary>
