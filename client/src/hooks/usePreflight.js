@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
 import { Device, Call } from '@twilio/voice-sdk'
-import { formatTwilioErr } from './twilioEvents'
+import { formatTwilioErr } from '../lib/twilioEvents'
+import { fetchToken } from '../lib/api'
+import { PREFLIGHT_SIGNALING_TIMEOUT_MS } from '../lib/constants'
 
 /**
  * Voice JS SDK v2 PreflightTest (Device.runPreflight).
@@ -33,14 +35,11 @@ export function usePreflight(identity, log) {
     const started = Date.now()
     timerRef.current = setInterval(() => setElapsedSec(Math.round((Date.now() - started) / 1000)), 1000)
     try {
-      const q = new URLSearchParams({ identity: `${identity}-preflight`, purpose: 'preflight' })
-      const res = await fetch(`/token?${q}`)
-      if (!res.ok) throw new Error(`token ${res.status}`)
-      const { token } = await res.json()
+      const { token } = await fetchToken({ identity: `${identity}-preflight`, purpose: 'preflight' })
 
       const test = Device.runPreflight(token, {
         codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
-        signalingTimeoutMs: 10000,
+        signalingTimeoutMs: PREFLIGHT_SIGNALING_TIMEOUT_MS,
         // fakeMicInput needs an echo TwiML app (see README); keep real mic by default.
         fakeMicInput: false,
       })
@@ -100,7 +99,9 @@ export function summarizeReport(r) {
     jitter: r.stats?.jitter?.average != null ? r.stats.jitter.average.toFixed(2) : '—',
     packetLoss: r.totals?.packetsLostFraction != null ? `${Number(r.totals.packetsLostFraction).toFixed(2)}%` : '—',
     edge: r.selectedEdge || r.edge || '—',
-    iceCandidate: local ? `${local.candidateType} / ${local.protocol}${local.networkType ? ` / ${local.networkType}` : ''}` : '—',
+    iceCandidate: local
+      ? `${local.candidateType} / ${local.protocol}${local.networkType ? ` / ${local.networkType}` : ''}`
+      : '—',
     turnRequired: r.isTurnRequired == null ? '—' : r.isTurnRequired ? 'yes (relay)' : 'no',
     signalingMs: r.networkTiming?.signaling?.duration ?? '—',
     durationSec: r.testTiming?.duration ? Math.round(r.testTiming.duration / 1000) : '—',

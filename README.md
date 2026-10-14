@@ -25,7 +25,9 @@ Open http://localhost:5173
 |------|--------|
 | SDK setup, tokens, register, cleanup | Register / Unregister in UI · `useTwilioDevice.js` |
 | Outbound / inbound, call events | Connect · **Ring this identity** · second browser ToClient · phone → `/voice/inbound` |
-| Mic permission, input/output devices | Audio section after register |
+| Mic permission, input/output devices | **Device management** tab: mic / speaker / ringtone selects (work mid-call), live mic meter, Test speaker, device list, default-mic fallback on unplug |
+| Current call | Floating, draggable call modal (state badge, peer, duration, Mute / Hang up) on every tab while a call is active |
+| Agent Wi-Fi drop (customer kept) | **Conference call** tab: conference-based call; on an unexpected agent leave the customer hears hold music (optional `AGENT_DROP_GRACE_SECONDS`) then `AGENT_DROP_MESSAGE` and is hung up gracefully; agent can Rejoin within the grace time. Needs `PUBLIC_BASE_URL` · `server/index.js` `/agent-drop/*` |
 | Token expiry + refresh | `tokenWillExpire` → `updateToken`; short `TOKEN_TTL_SECONDS` |
 | Error / disconnect demo | Hang up · Inject invalid token · Unregister then Register |
 
@@ -105,3 +107,50 @@ quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a 
   fail, so turn that off for this POC or proxy the media. Test recordings stay in the account until deleted.
 - `fakeMicInput: true` needs an app that echoes audio back; the record/playback flow covers the same audio check with a real mic.
 - Each test is a real Twilio call (~20s of usage) and shows up in the Call logs.
+
+## Architecture
+
+```
+client/src/
+  main.jsx               # / → App, /docs → DocsPage
+  App.jsx                # thin shell: shared Device, tab state, layout
+  components/
+    Header, ErrorBanner, IncomingBanner, DevicePanel, Tabs, CallModal, LogsDrawer, Badge, Meter, DocsPage
+    tabs/                # one file per tab
+      CallingTab, OutboundOutcomesTab, PowerLoopTab, PreflightTab,
+      CallHealthTab, DeviceManagementTab, ConferenceCallTab, FailureCasesTab
+  hooks/
+    useTwilioDevice.js   # Device lifecycle, calls, token refresh (public API used by every tab)
+    twilio/              # internal pieces: useEventLog, useAudioDevices, useReRegister, useWakeRecovery
+    usePreflight, usePowerLoop, useCallHangup, useLeaveWarning,
+    useDraggable, useMicMeter, useSpeakerTest, useHashTab
+  lib/
+    api.js               # every fetch to the server
+    constants.js         # tabs, regexes, timings, limits
+    twilioEvents.js      # error catalog, dispositions, backoff, message parsing
+    audioMeters.js, callHealth.js
+server/
+  index.js               # mounts routers, /health, listen
+  config.js              # dotenv + env validation (missing list, requireEnv, baseUrl)
+  lib/                   # twilioClient, identity, pushToClient
+  routes/                # token, voice, preflight, demo, conference (/agent-drop/*)
+```
+
+**Data flow**
+
+1. `DevicePanel` → `useTwilioDevice.register()` → `lib/api.fetchToken` → `GET /token` → `new Device(token)`.
+2. Outbound: `device.connect()` → Twilio → TwiML App → `POST /voice` (`routes/voice.js`) → `<Dial>` (or a `<Conference>` for the Conference call tab).
+3. Inbound: PSTN → `/voice/inbound` → `<Client>` → Device `incoming` → `IncomingBanner`.
+4. Status/AMD/conference callbacks hit the server, which pushes user-defined messages to the call (`lib/pushToClient`); the hook logs them and tabs render from its state.
+5. Every SDK/server event lands in the hook's event log → `LogsDrawer`.
+
+## Official Twilio docs
+
+Also linked from the in-app docs page (`/docs`, References section).
+
+- [Voice JavaScript SDK](https://www.twilio.com/docs/voice/sdks/javascript) · [Get started](https://www.twilio.com/docs/voice/sdks/javascript/get-started) · [Best practices](https://www.twilio.com/docs/voice/sdks/javascript/best-practices) · [Changelog](https://www.twilio.com/docs/voice/sdks/javascript/changelog)
+- [Device](https://www.twilio.com/docs/voice/sdks/javascript/twiliodevice) · [Call](https://www.twilio.com/docs/voice/sdks/javascript/twiliocall) · [Device.audio (AudioHelper)](https://www.twilio.com/docs/voice/sdks/javascript/twiliodevice/device-audio) · [PreflightTest](https://www.twilio.com/docs/voice/sdks/javascript/twiliopreflighttest)
+- [Voice SDK error codes](https://www.twilio.com/docs/voice/sdks/error-codes) (per-code pages: `https://www.twilio.com/docs/api/errors/<code>`, e.g. [31401](https://www.twilio.com/docs/api/errors/31401), [31486](https://www.twilio.com/docs/api/errors/31486), [31603](https://www.twilio.com/docs/api/errors/31603), [31480](https://www.twilio.com/docs/api/errors/31480), [53405](https://www.twilio.com/docs/api/errors/53405), [20101](https://www.twilio.com/docs/api/errors/20101))
+- [Access tokens](https://www.twilio.com/docs/iam/access-tokens) · [Edge locations (JS SDK)](https://www.twilio.com/docs/voice/sdks/javascript/edges) · [Global edge locations](https://www.twilio.com/docs/global-infrastructure/edge-locations) · [Network connectivity requirements](https://www.twilio.com/docs/voice/sdks/network-connectivity-requirements)
+- [Call message events](https://www.twilio.com/docs/voice/sdks/call-message-events) · [UserDefinedMessage resource](https://www.twilio.com/docs/voice/api/userdefinedmessage-resource) · [Answering Machine Detection](https://www.twilio.com/docs/voice/answering-machine-detection)
+- TwiML: [&lt;Dial&gt;](https://www.twilio.com/docs/voice/twiml/dial) · [&lt;Number&gt;](https://www.twilio.com/docs/voice/twiml/number) · [&lt;Record&gt;](https://www.twilio.com/docs/voice/twiml/record) · [&lt;Play&gt;](https://www.twilio.com/docs/voice/twiml/play) · [&lt;Redirect&gt;](https://www.twilio.com/docs/voice/twiml/redirect)

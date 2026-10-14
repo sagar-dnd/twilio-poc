@@ -12,7 +12,11 @@ export const ERROR_CATALOG = {
   31205: { kind: 'token', label: 'JWT token expired', action: 'refetch token + updateToken' },
   // Media / microphone
   31401: { kind: 'mic', label: 'Mic permission denied', action: 'show mic-permission help' },
-  31402: { kind: 'mic', label: 'Mic acquisition failed (busy/unplugged/bad deviceId)', action: 'fall back to default mic, open picker' },
+  31402: {
+    kind: 'mic',
+    label: 'Mic acquisition failed (busy/unplugged/bad deviceId)',
+    action: 'fall back to default mic, open picker',
+  },
   // Signaling / network
   31005: { kind: 'network', label: 'Connection error (WebSocket closed)', action: 're-register with backoff' },
   31009: { kind: 'network', label: 'Transport error (WebSocket unavailable)', action: 're-register with backoff' },
@@ -60,7 +64,12 @@ export function suggestDisposition(end) {
   if (end.reason === 'no-answer-timeout') return 'No answer'
   if (end.reason === 'cancel') return 'Missed'
   if (end.reason === 'reject') return 'Rejected'
-  if (end.reason === 'disconnect') return end.wasAnswered ? (end.hungUpBy === 'agent' ? 'Connected (agent hangup)' : 'Connected (customer hangup)') : 'No answer'
+  if (end.reason === 'disconnect')
+    return end.wasAnswered
+      ? end.hungUpBy === 'agent'
+        ? 'Connected (agent hangup)'
+        : 'Connected (customer hangup)'
+      : 'No answer'
   if (end.reason === 'error') return 'Failed'
   return null
 }
@@ -116,5 +125,10 @@ export function parseUserMessage(message) {
       content = { type: 'text', text: raw }
     }
   }
-  return { type: content?.type || 'unknown', content, contentType: message?.contentType, voiceEventSid: message?.voiceEventSid }
+  return {
+    type: content?.type || 'unknown',
+    content,
+    contentType: message?.contentType,
+    voiceEventSid: message?.voiceEventSid,
+  }
 }
