@@ -1,28 +1,171 @@
 import { useState } from 'react'
 import './App.css'
-import CallModal from './components/CallModal'
-import DevicePanel from './components/DevicePanel'
-import ErrorBanner from './components/ErrorBanner'
-import Header from './components/Header'
-import IncomingBanner from './components/IncomingBanner'
-import LogsDrawer from './components/LogsDrawer'
-import Tabs, { TabPane } from './components/Tabs'
-import CallHealthTab from './components/tabs/CallHealthTab'
-import CallingTab from './components/tabs/CallingTab'
-import ConferenceCallTab from './components/tabs/ConferenceCallTab'
-import DeviceManagementTab from './components/tabs/DeviceManagementTab'
-import FailureCasesTab from './components/tabs/FailureCasesTab'
-import OutboundOutcomesTab from './components/tabs/OutboundOutcomesTab'
-import PowerLoopTab from './components/tabs/PowerLoopTab'
-import PreflightTab from './components/tabs/PreflightTab'
-import { useCallHangup } from './hooks/useCallHangup'
-import { useHashTab } from './hooks/useHashTab'
-import { useLeaveWarning } from './hooks/useLeaveWarning'
-import { usePowerLoop } from './hooks/usePowerLoop'
-import { usePreflight } from './hooks/usePreflight'
-import { useTwilioDevice } from './hooks/useTwilioDevice'
-import { ringClient } from './lib/api'
-import { DEFAULT_IDENTITY, DEFAULT_TAB, TABS } from './lib/constants'
+import { useCallHangup, useHashTab, useLeaveWarning, usePowerLoop, usePreflight } from './hooks'
+import { DEFAULT_IDENTITY, DEFAULT_TAB, TABS, ringClient } from './lib'
+import { ConferenceCallTab, DeviceManagementTab } from './moreTabs'
+import { CallHealthTab, CallingTab, FailureCasesTab, OutboundOutcomesTab, PowerLoopTab, PreflightTab } from './tabs'
+import { CallModal, LogsDrawer } from './ui'
+import { useTwilioDevice } from './useTwilioDevice'
+
+// --- Header ------------------------------------------------------------------------------------
+
+/**
+ * @param {{ logCount: number, onOpenLogs: () => void }} props
+ */
+export function Header({ logCount, onOpenLogs }) {
+  return (
+    <header className="topbar">
+      <div className="topbar-inner">
+        <div className="topbar-title">
+          <h1>Twilio Voice SDK POC</h1>
+          <p className="sub">SD-7331 · Device lifecycle, calls, audio, token refresh &amp; recovery</p>
+        </div>
+        <div className="header-actions">
+          <button type="button" className="ghost logs-btn" onClick={onOpenLogs}>
+            Logs <span className="count">{logCount}</span>
+          </button>
+          <a className="nav-link" href="/docs">
+            Docs →
+          </a>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+// --- Error banner ------------------------------------------------------------------------------
+
+/**
+ * @param {{ message: string | null, onDismiss: () => void }} props
+ */
+export function ErrorBanner({ message, onDismiss }) {
+  if (!message) return null
+  return (
+    <div className="banner error" role="alert">
+      <span>{message}</span>
+      <button type="button" onClick={onDismiss}>
+        dismiss
+      </button>
+    </div>
+  )
+}
+
+// --- Incoming call banner ----------------------------------------------------------------------
+
+/**
+ * Incoming call prompt (also shown while already on a call).
+ * @param {{ call: import('@twilio/voice-sdk').Call | null, onAccept: () => void, onReject: () => void, onIgnore: () => void }} props
+ */
+export function IncomingBanner({ call, onAccept, onReject, onIgnore }) {
+  if (!call) return null
+  return (
+    <div className="banner incoming" role="status">
+      <span>Incoming from {call.parameters?.From || 'unknown'}</span>
+      <button type="button" onClick={onAccept}>
+        Accept
+      </button>
+      <button type="button" className="ghost" onClick={onReject}>
+        Reject
+      </button>
+      <button type="button" className="ghost" onClick={onIgnore}>
+        Ignore
+      </button>
+    </div>
+  )
+}
+
+// --- Device panel ------------------------------------------------------------------------------
+
+/**
+ * Identity, Register / Unregister and token status.
+ * @param {{ twilio: import('./useTwilioDevice').TwilioDevice, identity: string, onIdentityChange: (v: string) => void, busy: boolean, onRegister: () => void }} props
+ */
+export function DevicePanel({ twilio, identity, onIdentityChange, busy, onRegister }) {
+  return (
+    <section className="panel">
+      <h2>1. Device</h2>
+      <label>
+        Identity
+        <input
+          value={identity}
+          onChange={(e) => onIdentityChange(e.target.value)}
+          disabled={twilio.deviceState === 'registered'}
+          autoComplete="off"
+        />
+      </label>
+      <div className="row">
+        <button
+          type="button"
+          disabled={busy || twilio.deviceState === 'registered' || twilio.deviceState === 'registering'}
+          onClick={onRegister}
+        >
+          {busy || twilio.deviceState === 'registering' ? 'Registering…' : 'Register Device'}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={twilio.deviceState === 'unregistered'}
+          onClick={twilio.unregister}
+        >
+          Unregister / Destroy
+        </button>
+      </div>
+      <dl className="meta">
+        <div>
+          <dt>State</dt>
+          <dd data-state={twilio.deviceState}>{twilio.deviceState}</dd>
+        </div>
+        <div>
+          <dt>Token TTL</dt>
+          <dd>{twilio.tokenMeta ? `${twilio.tokenMeta.ttl}s` : '—'}</dd>
+        </div>
+        <div>
+          <dt>Expires</dt>
+          <dd>{twilio.tokenMeta ? new Date(twilio.tokenMeta.expiresAt).toLocaleTimeString() : '—'}</dd>
+        </div>
+      </dl>
+    </section>
+  )
+}
+
+// --- Tabs --------------------------------------------------------------------------------------
+
+/**
+ * Horizontal tab bar.
+ * @param {{ tabs: { id: string, label: string }[], active: string, onSelect: (id: string) => void }} props
+ */
+export function Tabs({ tabs, active, onSelect }) {
+  return (
+    <nav className="tabs" role="tablist">
+      {tabs.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={active === id}
+          className={active === id ? 'tab active' : 'tab'}
+          onClick={() => onSelect(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+/**
+ * Keeps every tab mounted (state and the shared call survive tab switches); hides inactive ones.
+ * @param {{ id: string, active: string, children: import('react').ReactNode }} props
+ */
+export function TabPane({ id, active, children }) {
+  return (
+    <div className="tab-pane" hidden={active !== id}>
+      {children}
+    </div>
+  )
+}
+
+// --- App ---------------------------------------------------------------------------------------
 
 const TAB_IDS = TABS.map((t) => t.id)
 

@@ -1,30 +1,343 @@
+/** The single shared Twilio Device hook. Internal pieces (event log, audio devices, re-register, wake recovery) live above it in this file. */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Device, Call } from '@twilio/voice-sdk'
-import {
-  classifyError,
-  createMicDeadDetector,
-  errorCode,
-  formatTwilioErr,
-  parseUserMessage,
-  suggestDisposition,
-} from '../lib/twilioEvents'
-import { fetchToken } from '../lib/api'
-import { EMPTY_HEALTH, toQuality } from '../lib/callHealth'
+import { Call, Device } from '@twilio/voice-sdk'
 import {
   CLOSE_PROTECTION_MESSAGE,
   DEFAULT_RING_TIMEOUT_SEC,
   E164,
+  EMPTY_HEALTH,
+  INPUT_VOLUME_THROTTLE_MS,
   INVALID_DEMO_TOKEN,
+  LOG_LIMIT,
   MAX_CALL_SIGNALING_TIMEOUT_MS,
   MISSED_CALLS_LIMIT,
   SAMPLE_LOG_INTERVAL_MS,
   TOKEN_REFRESH_MS,
   VOLUME_CHANGE_EPSILON,
-} from '../lib/constants'
-import { useEventLog } from './twilio/useEventLog'
-import { useAudioDevices } from './twilio/useAudioDevices'
-import { useReRegister } from './twilio/useReRegister'
-import { useWakeRecovery } from './twilio/useWakeRecovery'
+  WAKE_TOKEN_MARGIN_MS,
+  backoffMs,
+  classifyError,
+  createMicDeadDetector,
+  errorCode,
+  fetchToken,
+  firstDeviceId,
+  formatTwilioErr,
+  mapTwilioDevices,
+  parseUserMessage,
+  suggestDisposition,
+  toQuality,
+} from './lib'
+
+// --- Event log ---------------------------------------------------------------------------------
+
+/**
+ * @typedef {'debug' | 'info' | 'warn' | 'error'} LogLevel
+ * @typedef {{ id: string, ts: string, level: LogLevel, source: string, msg: string, detail?: string }} LogEntry
+ * @typedef {(level: LogLevel, msg: string, detail?: unknown, source?: string) => void} LogFn
+ */
+
+function stringifyDetail(detail) {
+  if (detail == null) return undefined
+  return typeof detail === 'string' ? detail : JSON.stringify(detail)
+}
+
+/** Bounded, newest-first event log shared by every hook and tab. */
+function useEventLog() {
+  const [logs, setLogs] = useState(/** @type {LogEntry[]} */ ([]))
+
+  /** @type {LogFn} */
+  const log = useCallback((level, msg, detail, source = 'app') => {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ts: new Date().toISOString().slice(11, 23),
+      level,
+      source,
+      msg,
+      detail: stringifyDetail(detail),
+    }
+    setLogs((prev) => [entry, ...prev].slice(0, LOG_LIMIT))
+  }, [])
+
+  const clearLogs = useCallback(() => setLogs([]), [])
+
+  return { logs, log, clearLogs }
+}
+
+// --- Audio devices -----------------------------------------------------------------------------
+
+/**
+ * Mic / speaker / ringtone selection on `device.audio` (AudioHelper).
+ * @param {{ deviceRef: { current: import('@twilio/voice-sdk').Device | null }, log: LogFn, setError: (msg: string) => void }} deps
+ */
+function useAudioDevices({ deviceRef, log, setError }) {
+  // The ref mirrors selectedInput so SDK callbacks read the latest value without re-binding.
+  const selectedInputRef = useRef('')
+  const [inputDevices, setInputDevices] = useState([])
+  const [outputDevices, setOutputDevices] = useState([])
+  const [selectedInput, setSelectedInputState] = useState('')
+  const [selectedOutput, setSelectedOutput] = useState('')
+  const [selectedRingtone, setSelectedRingtone] = useState('')
+  const [micLevel, setMicLevel] = useState(0)
+  const [outputSelectionSupported, setOutputSelectionSupported] = useState(true)
+
+  const rememberInput = useCallback((id) => {
+    selectedInputRef.current = id
+    setSelectedInputState(id)
+  }, [])
+
+  const refreshAudioDevices = useCallback(
+    (device) => {
+      const audio = device?.audio
+      if (!audio) return { input: [], output: [] }
+
+      const input = mapTwilioDevices(audio.availableInputDevices)
+      const output = mapTwilioDevices(audio.availableOutputDevices)
+      setInputDevices(input)
+      setOutputDevices(output)
+      setOutputSelectionSupported(Boolean(audio.isOutputSelectionSupported))
+      if (audio.inputDevice?.deviceId) rememberInput(audio.inputDevice.deviceId)
+      const activeOut = firstDeviceId(audio.speakerDevices)
+      if (activeOut) setSelectedOutput(activeOut)
+      const activeRing = firstDeviceId(audio.ringtoneDevices)
+      if (activeRing) setSelectedRingtone(activeRing)
+      return { input, output }
+    },
+    [rememberInput]
+  )
+
+  /** Pick the first available devices right after register. */
+  const applyInitialDevices = useCallback(
+    async (device) => {
+      const { input, output } = refreshAudioDevices(device)
+      if (input[0]?.id) {
+        await device.audio.setInputDevice(input[0].id)
+        rememberInput(input[0].id)
+      }
+      if (device.audio.isOutputSelectionSupported && output[0]?.id) {
+        await device.audio.speakerDevices.set(output[0].id)
+        await device.audio.ringtoneDevices.set(output[0].id)
+        setSelectedOutput(output[0].id)
+        setSelectedRingtone(output[0].id)
+      }
+    },
+    [refreshAudioDevices, rememberInput]
+  )
+
+  /** We unset the input after each call, so re-apply the chosen mic before media starts. */
+  const applySelectedInput = useCallback(async (device) => {
+    const inputId = selectedInputRef.current
+    if (device && inputId) await device.audio.setInputDevice(inputId)
+  }, [])
+
+  const attachAudioListeners = useCallback(
+    (device) => {
+      let lastMicAt = 0
+      device.audio.on('inputVolume', (v) => {
+        const now = Date.now()
+        if (now - lastMicAt < INPUT_VOLUME_THROTTLE_MS) return
+        lastMicAt = now
+        setMicLevel(v)
+      })
+      device.audio.on('deviceChange', async (lostActiveDevices) => {
+        const { input, output } = refreshAudioDevices(device)
+        log('info', 'audio devices changed', `${input.length} in / ${output.length} out`, 'audio')
+        if (!lostActiveDevices?.length) return
+        log('warn', 'lost active audio device', lostActiveDevices.map((d) => d.label || d.deviceId).join(', '), 'audio')
+        const lostInput = lostActiveDevices.some((d) => d.deviceId === selectedInputRef.current)
+        if (!lostInput) return
+        try {
+          await device.audio.setInputDevice('default')
+          rememberInput('default')
+          log('info', 'fell back to default mic', null, 'audio')
+        } catch (e) {
+          setError(`Mic unplugged and no fallback: ${formatTwilioErr(e)}`)
+        }
+      })
+    },
+    [log, refreshAudioDevices, rememberInput, setError]
+  )
+
+  const resetAudio = useCallback(() => {
+    selectedInputRef.current = ''
+    setInputDevices([])
+    setOutputDevices([])
+    setSelectedInputState('')
+    setSelectedOutput('')
+    setSelectedRingtone('')
+    setMicLevel(0)
+  }, [])
+
+  const setInputDevice = useCallback(
+    async (deviceId) => {
+      const device = deviceRef.current
+      if (!device || !deviceId) return
+      try {
+        await device.audio.setInputDevice(deviceId)
+        rememberInput(deviceId)
+        log('info', 'setInputDevice', deviceId, 'audio')
+      } catch (e) {
+        setError(`Mic switch failed (31402?): ${formatTwilioErr(e)}`)
+        log('error', 'setInputDevice failed', formatTwilioErr(e), 'audio')
+      }
+    },
+    [deviceRef, log, rememberInput, setError]
+  )
+
+  const setOutputDevice = useCallback(
+    async (deviceId) => {
+      const device = deviceRef.current
+      if (!device || !deviceId || !device.audio.isOutputSelectionSupported) return
+      try {
+        await device.audio.speakerDevices.set(deviceId)
+        setSelectedOutput(deviceId)
+        log('info', 'speakerDevices.set', deviceId, 'audio')
+      } catch (e) {
+        log('error', 'speakerDevices.set failed', formatTwilioErr(e), 'audio')
+      }
+    },
+    [deviceRef, log]
+  )
+
+  const setRingtoneDevice = useCallback(
+    async (deviceId) => {
+      const device = deviceRef.current
+      if (!device || !deviceId || !device.audio.isOutputSelectionSupported) return
+      try {
+        await device.audio.ringtoneDevices.set(deviceId)
+        setSelectedRingtone(deviceId)
+        log('info', 'ringtoneDevices.set', deviceId, 'audio')
+      } catch (e) {
+        log('error', 'ringtoneDevices.set failed', formatTwilioErr(e), 'audio')
+      }
+    },
+    [deviceRef, log]
+  )
+
+  const testSpeaker = useCallback(async () => {
+    const device = deviceRef.current
+    if (!device) return
+    try {
+      await device.audio.speakerDevices.test()
+      log('info', 'speakerDevices.test()', null, 'audio')
+    } catch (e) {
+      log('error', 'speaker test failed', formatTwilioErr(e), 'audio')
+    }
+  }, [deviceRef, log])
+
+  const refreshDevices = useCallback(() => {
+    const { input, output } = refreshAudioDevices(deviceRef.current)
+    log('info', 'refresh audio devices', `${input.length} in / ${output.length} out`, 'audio')
+  }, [deviceRef, refreshAudioDevices, log])
+
+  return {
+    state: {
+      inputDevices,
+      outputDevices,
+      selectedInput,
+      selectedOutput,
+      selectedRingtone,
+      micLevel,
+      outputSelectionSupported,
+    },
+    actions: { setInputDevice, setOutputDevice, setRingtoneDevice, testSpeaker, refreshDevices },
+    internal: { refreshAudioDevices, applyInitialDevices, applySelectedInput, attachAudioListeners, resetAudio },
+  }
+}
+
+// --- Re-register with backoff ------------------------------------------------------------------
+
+/**
+ * Re-register with exponential backoff + jitter after network errors / unexpected unregister.
+ * @param {{ deviceRef: { current: Device | null }, callRef: { current: unknown }, intentionalUnregisterRef: { current: boolean }, log: LogFn }} deps
+ */
+function useReRegister({ deviceRef, callRef, intentionalUnregisterRef, log }) {
+  const attemptRef = useRef(0)
+  const timerRef = useRef(null)
+  // Self-reference so the timer can reschedule with the latest callback.
+  const scheduleRef = useRef(null)
+
+  const scheduleReRegister = useCallback(
+    (reason) => {
+      if (intentionalUnregisterRef.current || timerRef.current) return
+      const attempt = attemptRef.current++
+      const wait = backoffMs(attempt)
+      log('warn', `re-register in ${wait}ms (attempt ${attempt + 1})`, reason, 'device')
+      timerRef.current = setTimeout(async () => {
+        timerRef.current = null
+        const device = deviceRef.current
+        const settled =
+          !device ||
+          intentionalUnregisterRef.current ||
+          device.state === Device.State.Registered ||
+          device.state === Device.State.Registering
+        if (settled) return
+        // Never re-register mid-call: the call keeps its own media/signaling; retry after it ends.
+        if (callRef.current) {
+          scheduleRef.current?.('deferred: call in progress')
+          return
+        }
+        try {
+          await device.register()
+        } catch (e) {
+          scheduleRef.current?.(e.message)
+        }
+      }, wait)
+    },
+    [callRef, deviceRef, intentionalUnregisterRef, log]
+  )
+
+  useEffect(() => {
+    scheduleRef.current = scheduleReRegister
+  }, [scheduleReRegister])
+
+  const cancelReRegister = useCallback(() => {
+    clearTimeout(timerRef.current)
+    timerRef.current = null
+  }, [])
+
+  const resetAttempts = useCallback(() => {
+    attemptRef.current = 0
+  }, [])
+
+  return { scheduleReRegister, cancelReRegister, resetAttempts }
+}
+
+// --- Wake / online recovery --------------------------------------------------------------------
+
+/**
+ * Laptop sleep / network switch: on wake or back online, refresh a near-expired token
+ * and re-register if the Device dropped its registration.
+ */
+function useWakeRecovery({ deviceRef, intentionalUnregisterRef, tokenMeta, refreshToken, scheduleReRegister, log }) {
+  useEffect(() => {
+    const onWake = (why) => {
+      const device = deviceRef.current
+      if (!device || intentionalUnregisterRef.current) return
+      const expiresAt = tokenMeta?.expiresAt ? new Date(tokenMeta.expiresAt).getTime() : 0
+      if (expiresAt && expiresAt - Date.now() < WAKE_TOKEN_MARGIN_MS) refreshToken(`${why}: token near/after expiry`)
+      if (device.state !== Device.State.Registered && device.state !== Device.State.Registering) {
+        scheduleReRegister(why)
+      }
+    }
+    const onVisible = () => document.visibilityState === 'visible' && onWake('tab visible')
+    const onOnline = () => {
+      log('info', 'browser online', null, 'network')
+      onWake('online')
+    }
+    const onOffline = () => log('warn', 'browser offline', null, 'network')
+
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [deviceRef, intentionalUnregisterRef, tokenMeta, refreshToken, scheduleReRegister, log])
+}
+
+// --- useTwilioDevice ---------------------------------------------------------------------------
 
 /**
  * @typedef {{ sid?: string, direction: 'inbound' | 'outbound', peer?: string, status: string, answeredAt?: number }} ActiveCall
