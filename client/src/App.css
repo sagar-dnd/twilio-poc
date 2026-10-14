@@ -364,23 +364,6 @@ header .header-actions .nav-link {
   color: var(--text);
   font-size: 0.75em;
 }
-.callbar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  align-items: center;
-  padding: 0.6rem 0.9rem;
-  font-size: 0.85rem;
-}
-.callbar[data-active='true'] {
-  border-color: var(--accent);
-}
-.callbar .spacer {
-  flex: 1;
-}
 .tab-pane {
   display: flex;
   flex-direction: column;
@@ -453,4 +436,54 @@ header .header-actions .nav-link {
 .doc-section-title {
   margin: 0.75rem 0 0;
   font-size: 1.1rem;
+}
+
+/* Floating call modal */
+.call-modal {
+  position: fixed;
+  z-index: 15;
+  width: 300px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-color: var(--accent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.call-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.call-modal-head:active {
+  cursor: grabbing;
+}
+.call-modal-head .spacer {
+  flex: 1;
+}
+.call-modal-head button {
+  padding: 0.1rem 0.5rem;
+}
+.call-modal-peer {
+  font-size: 1.05rem;
+}
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.device-list li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.device-list li[data-active='true'] {
+  color: var(--text);
+  font-weight: 600;
 }

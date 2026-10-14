@@ -70,6 +70,8 @@ export function useTwilioDevice(identity) {
   const [outputDevices, setOutputDevices] = useState([])
   const [selectedInput, setSelectedInput] = useState('')
   const [selectedOutput, setSelectedOutput] = useState('')
+  const [selectedRingtone, setSelectedRingtone] = useState('')
+  const [micLevel, setMicLevel] = useState(0)
   const [outputSelectionSupported, setOutputSelectionSupported] = useState(true)
   const [muted, setMuted] = useState(false)
   const [logs, setLogs] = useState([])
@@ -111,6 +113,9 @@ export function useTwilioDevice(identity) {
       const speakers = audio.speakerDevices?.get?.()
       const activeOut = speakers && speakers.size ? Array.from(speakers)[0]?.deviceId : ''
       if (activeOut) setSelectedOutput(activeOut)
+      const rings = audio.ringtoneDevices?.get?.()
+      const activeRing = rings && rings.size ? Array.from(rings)[0]?.deviceId : ''
+      if (activeRing) setSelectedRingtone(activeRing)
       return { input, output }
     },
     []
@@ -161,7 +166,9 @@ export function useTwilioDevice(identity) {
     (call, direction) => {
       callRef.current = call
       callMetaRef.current = { direction, startedAt: Date.now() }
-      setActiveCall({ sid: call.parameters?.CallSid, direction, status: call.status() })
+      const peer =
+        direction === 'inbound' ? call.parameters?.From : call.customParameters?.get?.('To') || call.parameters?.To
+      setActiveCall({ sid: call.parameters?.CallSid, direction, peer, status: call.status() })
       setCallState(call.status())
       setHealth(EMPTY_HEALTH)
       log('info', `call ${direction}`, call.status(), 'call')
@@ -202,6 +209,7 @@ export function useTwilioDevice(identity) {
         clearRingTimer()
         callMetaRef.current.acceptedAt = Date.now()
         syncStatus()
+        setActiveCall((prev) => (prev ? { ...prev, answeredAt: callMetaRef.current.acceptedAt } : prev))
         log('info', 'accept (media connected)', call.parameters?.CallSid, 'call')
       })
       call.on('disconnect', () => {
@@ -425,8 +433,17 @@ export function useTwilioDevice(identity) {
         log('info', 'destroyed', null, 'device')
       })
 
+      // Live mic level outside calls too (AudioHelper analyses the selected input); throttled.
+      let lastMicAt = 0
+      device.audio.on('inputVolume', (v) => {
+        const now = Date.now()
+        if (now - lastMicAt < 100) return
+        lastMicAt = now
+        setMicLevel(v)
+      })
       device.audio.on('deviceChange', async (lostActiveDevices) => {
-        refreshAudioDevices(device)
+        const { input, output } = refreshAudioDevices(device)
+        log('info', 'audio devices changed', `${input.length} in / ${output.length} out`, 'audio')
         if (lostActiveDevices?.length) {
           log('warn', 'lost active audio device', lostActiveDevices.map((d) => d.label || d.deviceId).join(', '), 'audio')
           const lostInput = lostActiveDevices.some((d) => d.deviceId === selectedInputRef.current)
@@ -454,6 +471,7 @@ export function useTwilioDevice(identity) {
         await device.audio.speakerDevices.set(output[0].id)
         await device.audio.ringtoneDevices.set(output[0].id)
         setSelectedOutput(output[0].id)
+        setSelectedRingtone(output[0].id)
       }
     } catch (e) {
       setError((prev) => prev || e.message)
@@ -481,6 +499,8 @@ export function useTwilioDevice(identity) {
       setOutputDevices([])
       setSelectedInput('')
       setSelectedOutput('')
+      setSelectedRingtone('')
+      setMicLevel(0)
       setActiveCall(null)
       setIncomingCall(null)
     } catch (e) {
@@ -604,13 +624,47 @@ export function useTwilioDevice(identity) {
     async (deviceId) => {
       const device = deviceRef.current
       if (!device || !deviceId || !device.audio.isOutputSelectionSupported) return
-      await device.audio.speakerDevices.set(deviceId)
-      await device.audio.ringtoneDevices.set(deviceId)
-      setSelectedOutput(deviceId)
-      log('info', 'output + ringtone', deviceId, 'audio')
+      try {
+        await device.audio.speakerDevices.set(deviceId)
+        setSelectedOutput(deviceId)
+        log('info', 'speakerDevices.set', deviceId, 'audio')
+      } catch (e) {
+        log('error', 'speakerDevices.set failed', formatTwilioErr(e), 'audio')
+      }
     },
     [log]
   )
+
+  const setRingtoneDevice = useCallback(
+    async (deviceId) => {
+      const device = deviceRef.current
+      if (!device || !deviceId || !device.audio.isOutputSelectionSupported) return
+      try {
+        await device.audio.ringtoneDevices.set(deviceId)
+        setSelectedRingtone(deviceId)
+        log('info', 'ringtoneDevices.set', deviceId, 'audio')
+      } catch (e) {
+        log('error', 'ringtoneDevices.set failed', formatTwilioErr(e), 'audio')
+      }
+    },
+    [log]
+  )
+
+  const testSpeaker = useCallback(async () => {
+    const device = deviceRef.current
+    if (!device) return
+    try {
+      await device.audio.speakerDevices.test()
+      log('info', 'speakerDevices.test()', null, 'audio')
+    } catch (e) {
+      log('error', 'speaker test failed', formatTwilioErr(e), 'audio')
+    }
+  }, [log])
+
+  const refreshDevices = useCallback(() => {
+    const { input, output } = refreshAudioDevices(deviceRef.current)
+    log('info', 'refresh audio devices', `${input.length} in / ${output.length} out`, 'audio')
+  }, [refreshAudioDevices, log])
 
   const setRingTimeoutSec = useCallback((sec) => {
     const n = Math.max(0, Number(sec) || 0)
@@ -675,6 +729,8 @@ export function useTwilioDevice(identity) {
     outputDevices,
     selectedInput,
     selectedOutput,
+    selectedRingtone,
+    micLevel,
     outputSelectionSupported,
     muted,
     logs,
@@ -699,6 +755,9 @@ export function useTwilioDevice(identity) {
     sendMessage,
     setInputDevice,
     setOutputDevice,
+    setRingtoneDevice,
+    testSpeaker,
+    refreshDevices,
     simulateExpiredToken,
     log,
     clearLogs: () => setLogs([]),

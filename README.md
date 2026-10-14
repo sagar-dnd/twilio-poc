@@ -25,7 +25,8 @@ Open http://localhost:5173
 |------|--------|
 | SDK setup, tokens, register, cleanup | Register / Unregister in UI · `useTwilioDevice.js` |
 | Outbound / inbound, call events | Connect · **Ring this identity** · second browser ToClient · phone → `/voice/inbound` |
-| Mic permission, input/output devices | Audio section after register |
+| Mic permission, input/output devices | **Device management** tab: mic / speaker / ringtone selects (work mid-call), live mic meter, Test speaker, device list, default-mic fallback on unplug |
+| Current call | Floating, draggable call modal (state badge, peer, duration, Mute / Hang up) on every tab while a call is active |
 | Token expiry + refresh | `tokenWillExpire` → `updateToken`; short `TOKEN_TTL_SECONDS` |
 | Error / disconnect demo | Hang up · Inject invalid token · Unregister then Register |
 

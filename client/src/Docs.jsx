@@ -121,6 +121,12 @@ const TABS = [
     label: 'Audio / Mic',
     cards: [
       {
+        title: 'Device management tab',
+        events: <><C>device.audio</C> <C>deviceChange</C>, <C>inputVolume</C>; <C>call.volume</C> during calls</>,
+        handling: <>The POC's <b>Device management</b> tab: mic (<C>setInputDevice</C>), speaker (<C>speakerDevices.set</C>) and ringtone (<C>ringtoneDevices.set</C>) selects that apply mid-call, a live mic meter, "Test speaker" (<C>speakerDevices.test()</C>), and a device list with the active ones marked. The list refreshes on <C>deviceChange</C>; a lost mic falls back to <C>default</C>. Changes are logged with source <C>audio</C> (<C>useTwilioDevice.js</C>).</>,
+        repro: <>Register, open Device management, switch devices during a call; plug/unplug a headset and watch the list and the event log.</>,
+      },
+      {
         title: 'Mic permission denied',
         events: <>getUserMedia <C>NotAllowedError</C>, <C>error</C> 31401</>,
         handling: <>Pre-flight <C>getUserMedia</C> before creating the Device; banner with permission help. 31401 is the v2 code (31208 was v1).</>,

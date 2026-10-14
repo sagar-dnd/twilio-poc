@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTwilioDevice } from './useTwilioDevice'
 import { usePreflight, summarizeReport } from './usePreflight'
 import { ERROR_CATALOG } from './twilioEvents'
+import CallModal from './CallModal'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
@@ -12,6 +13,7 @@ const TABS = [
   ['power', 'Power loop'],
   ['preflight', 'Preflight'],
   ['health', 'Call health'],
+  ['devices', 'Device management'],
   ['failures', 'Failure cases'],
 ]
 const CALLEE_CODES = Object.entries(ERROR_CATALOG).filter(([, v]) => v.kind === 'callee')
@@ -276,22 +278,6 @@ export default function App() {
           </div>
         </dl>
       </section>
-      <div className="callbar panel" data-active={!!twilio.activeCall}>
-        <span className="badge" data-state={twilio.deviceState}>device: {twilio.deviceState}</span>
-        <span>
-          Call: <strong>{twilio.callState || 'idle'}</strong>
-          {twilio.activeCall && ` · ${twilio.activeCall.direction || ''} · `}
-          {twilio.activeCall && <span className="mono">{twilio.activeCall.sid || ''}</span>}
-        </span>
-        {twilio.health.reconnecting && <span className="badge warn">Reconnecting…</span>}
-        <span className="spacer" />
-        <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={twilio.toggleMute}>
-          {twilio.muted ? 'Unmute' : 'Mute'}
-        </button>
-        <button type="button" className="danger" disabled={!twilio.activeCall} onClick={twilio.hangup}>
-          Hang up
-        </button>
-      </div>
       <nav className="tabs" role="tablist">
         {TABS.map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'tab active' : 'tab'} onClick={() => selectTab(id)}>
@@ -347,12 +333,6 @@ export default function App() {
             onClick={onCall}
           >
             Connect
-          </button>
-          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={twilio.hangup}>
-            Hang up
-          </button>
-          <button type="button" className="ghost" disabled={!twilio.activeCall} onClick={twilio.toggleMute}>
-            {twilio.muted ? 'Unmute' : 'Mute'}
           </button>
         </div>
         <dl className="meta">
@@ -674,14 +654,18 @@ export default function App() {
           </button>
         </div>
       </section>
+      </div>
+      <div className="tab-pane" hidden={tab !== 'devices'}>
       <section className="panel">
-        <h2>3. Audio devices</h2>
+        <h2>Device management</h2>
         <p className="hint">
-          Input: <code>setInputDevice</code>. Output: speaker + ringtone both follow this dropdown
-          (Chrome/Edge). Change it while ringing to move the ring off earphones.
+          Mic: <code>device.audio.setInputDevice</code>. Speaker: <code>speakerDevices.set</code>. Ringtone:{' '}
+          <code>ringtoneDevices.set</code>. All apply live, including mid-call. The list refreshes on the SDK{' '}
+          <code>deviceChange</code> event. If the active mic is unplugged we fall back to the <code>default</code> mic
+          automatically. Every change is logged with source <code>audio</code>.
         </p>
         <label>
-          Input (microphone)
+          Microphone (input)
           <select
             value={selectedOrEmpty(twilio.selectedInput, twilio.inputDevices)}
             onChange={(e) => twilio.setInputDevice(e.target.value)}
@@ -689,14 +673,12 @@ export default function App() {
           >
             <option value="">Select mic</option>
             {twilio.inputDevices.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.label}
-              </option>
+              <option key={d.id} value={d.id}>{d.label}</option>
             ))}
           </select>
         </label>
         <label>
-          Output (speaker)
+          Speaker (call audio)
           <select
             value={selectedOrEmpty(twilio.selectedOutput, twilio.outputDevices)}
             onChange={(e) => twilio.setOutputDevice(e.target.value)}
@@ -704,15 +686,67 @@ export default function App() {
           >
             <option value="">Select speaker</option>
             {twilio.outputDevices.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.label}
-              </option>
+              <option key={d.id} value={d.id}>{d.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Ringtone output
+          <select
+            value={selectedOrEmpty(twilio.selectedRingtone, twilio.outputDevices)}
+            onChange={(e) => twilio.setRingtoneDevice(e.target.value)}
+            disabled={twilio.deviceState !== 'registered' || !twilio.outputSelectionSupported}
+          >
+            <option value="">Select ringtone device</option>
+            {twilio.outputDevices.map((d) => (
+              <option key={d.id} value={d.id}>{d.label}</option>
             ))}
           </select>
         </label>
         {!twilio.outputSelectionSupported && twilio.deviceState === 'registered' && (
-          <p className="hint">This browser does not support Twilio output device selection.</p>
+          <p className="hint">This browser does not support output device selection (speaker/ringtone use the system default).</p>
         )}
+        <dl className="meta">
+          <div>
+            <dt>Mic level (live)</dt>
+            <dd>
+              <meter min="0" max="1" value={twilio.activeCall ? twilio.health.inputLevel : twilio.micLevel} />
+            </dd>
+          </div>
+        </dl>
+        <div className="row">
+          <button
+            type="button"
+            disabled={twilio.deviceState !== 'registered' || !twilio.outputSelectionSupported}
+            onClick={twilio.testSpeaker}
+          >
+            Test speaker
+          </button>
+          <button type="button" className="ghost" disabled={twilio.deviceState !== 'registered'} onClick={twilio.refreshDevices}>
+            Refresh list
+          </button>
+        </div>
+      </section>
+      <section className="panel">
+        <h2>Current devices</h2>
+        {twilio.inputDevices.length + twilio.outputDevices.length === 0 && (
+          <p className="hint">Register the Device to list audio devices.</p>
+        )}
+        <ul className="device-list">
+          {twilio.inputDevices.map((d) => (
+            <li key={`in-${d.id}`} data-active={d.id === twilio.selectedInput}>
+              <span className="lvl">mic</span> {d.label}
+              {d.id === twilio.selectedInput && <span className="badge">active</span>}
+            </li>
+          ))}
+          {twilio.outputDevices.map((d) => (
+            <li key={`out-${d.id}`} data-active={d.id === twilio.selectedOutput || d.id === twilio.selectedRingtone}>
+              <span className="lvl">out</span> {d.label}
+              {d.id === twilio.selectedOutput && <span className="badge">speaker</span>}
+              {d.id === twilio.selectedRingtone && <span className="badge">ringtone</span>}
+            </li>
+          ))}
+        </ul>
       </section>
       </div>
       <div className="tab-pane" hidden={tab !== 'failures'}>
@@ -737,6 +771,16 @@ export default function App() {
         </div>
       </section>
       </div>
+      {twilio.activeCall && (
+        <CallModal
+          call={twilio.activeCall}
+          callState={twilio.callState}
+          reconnecting={twilio.health.reconnecting}
+          muted={twilio.muted}
+          onToggleMute={twilio.toggleMute}
+          onHangup={twilio.hangup}
+        />
+      )}
       {logsOpen && <div className="sheet-backdrop" onClick={() => setLogsOpen(false)} />}
       <aside className={logsOpen ? 'sheet open' : 'sheet'} aria-hidden={!logsOpen}>
         <div className="sheet-head">
