@@ -106,3 +106,14 @@ quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a 
   fail, so turn that off for this POC or proxy the media. Test recordings stay in the account until deleted.
 - `fakeMicInput: true` needs an app that echoes audio back; the record/playback flow covers the same audio check with a real mic.
 - Each test is a real Twilio call (~20s of usage) and shows up in the Call logs.
+
+## Official Twilio docs
+
+Also linked from the in-app docs page (`/docs`, References section).
+
+- [Voice JavaScript SDK](https://www.twilio.com/docs/voice/sdks/javascript) · [Get started](https://www.twilio.com/docs/voice/sdks/javascript/get-started) · [Best practices](https://www.twilio.com/docs/voice/sdks/javascript/best-practices) · [Changelog](https://www.twilio.com/docs/voice/sdks/javascript/changelog)
+- [Device](https://www.twilio.com/docs/voice/sdks/javascript/twiliodevice) · [Call](https://www.twilio.com/docs/voice/sdks/javascript/twiliocall) · [Device.audio (AudioHelper)](https://www.twilio.com/docs/voice/sdks/javascript/twiliodevice/device-audio) · [PreflightTest](https://www.twilio.com/docs/voice/sdks/javascript/twiliopreflighttest)
+- [Voice SDK error codes](https://www.twilio.com/docs/voice/sdks/error-codes) (per-code pages: `https://www.twilio.com/docs/api/errors/<code>`, e.g. [31401](https://www.twilio.com/docs/api/errors/31401), [31486](https://www.twilio.com/docs/api/errors/31486), [31603](https://www.twilio.com/docs/api/errors/31603), [31480](https://www.twilio.com/docs/api/errors/31480), [53405](https://www.twilio.com/docs/api/errors/53405), [20101](https://www.twilio.com/docs/api/errors/20101))
+- [Access tokens](https://www.twilio.com/docs/iam/access-tokens) · [Edge locations (JS SDK)](https://www.twilio.com/docs/voice/sdks/javascript/edges) · [Global edge locations](https://www.twilio.com/docs/global-infrastructure/edge-locations) · [Network connectivity requirements](https://www.twilio.com/docs/voice/sdks/network-connectivity-requirements)
+- [Call message events](https://www.twilio.com/docs/voice/sdks/call-message-events) · [UserDefinedMessage resource](https://www.twilio.com/docs/voice/api/userdefinedmessage-resource) · [Answering Machine Detection](https://www.twilio.com/docs/voice/answering-machine-detection)
+- TwiML: [&lt;Dial&gt;](https://www.twilio.com/docs/voice/twiml/dial) · [&lt;Number&gt;](https://www.twilio.com/docs/voice/twiml/number) · [&lt;Record&gt;](https://www.twilio.com/docs/voice/twiml/record) · [&lt;Play&gt;](https://www.twilio.com/docs/voice/twiml/play) · [&lt;Redirect&gt;](https://www.twilio.com/docs/voice/twiml/redirect)

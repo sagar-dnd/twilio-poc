@@ -487,3 +487,26 @@ header .header-actions .nav-link {
   color: var(--text);
   font-weight: 600;
 }
+
+.doc-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.doc-links a:hover {
+  text-decoration: underline;
+}
+.doc-links.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.doc-twilio-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+}

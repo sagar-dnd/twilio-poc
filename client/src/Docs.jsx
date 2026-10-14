@@ -222,6 +222,100 @@ const TABS = [
   },
 ]
 
+/* Official Twilio docs. Every URL verified with curl -L (HTTP 200) on 2026-10-14. */
+const TW = 'https://www.twilio.com/docs'
+const L = {
+  sdk: ['Voice JavaScript SDK', `${TW}/voice/sdks/javascript`],
+  getStarted: ['Get started (JS SDK)', `${TW}/voice/sdks/javascript/get-started`],
+  device: ['Device reference', `${TW}/voice/sdks/javascript/twiliodevice`],
+  call: ['Call reference', `${TW}/voice/sdks/javascript/twiliocall`],
+  audio: ['Device.audio (AudioHelper)', `${TW}/voice/sdks/javascript/twiliodevice/device-audio`],
+  preflight: ['PreflightTest reference', `${TW}/voice/sdks/javascript/twiliopreflighttest`],
+  bestPractices: ['JS SDK best practices', `${TW}/voice/sdks/javascript/best-practices`],
+  changelog: ['JS SDK changelog', `${TW}/voice/sdks/javascript/changelog`],
+  errors: ['Voice SDK error codes', `${TW}/voice/sdks/error-codes`],
+  edges: ['Edge locations (JS SDK)', `${TW}/voice/sdks/javascript/edges`],
+  globalEdges: ['Global edge locations', `${TW}/global-infrastructure/edge-locations`],
+  network: ['Network connectivity requirements', `${TW}/voice/sdks/network-connectivity-requirements`],
+  tokens: ['Access tokens', `${TW}/iam/access-tokens`],
+  messages: ['Call message events (user-defined messages)', `${TW}/voice/sdks/call-message-events`],
+  udm: ['UserDefinedMessage resource', `${TW}/voice/api/userdefinedmessage-resource`],
+  udmSub: ['UserDefinedMessageSubscription resource', `${TW}/voice/api/userdefinedmessagesubscription-resource`],
+  amd: ['Answering Machine Detection', `${TW}/voice/answering-machine-detection`],
+  dial: ['TwiML <Dial> (action, answerOnBridge)', `${TW}/voice/twiml/dial`],
+  number: ['TwiML <Number> (statusCallback, AMD)', `${TW}/voice/twiml/number`],
+  record: ['TwiML <Record>', `${TW}/voice/twiml/record`],
+  play: ['TwiML <Play>', `${TW}/voice/twiml/play`],
+  redirect: ['TwiML <Redirect>', `${TW}/voice/twiml/redirect`],
+  callResource: ['Call resource (REST)', `${TW}/voice/api/call-resource`],
+  qualityEvents: ['SDK call quality events (Voice Insights)', `${TW}/voice/voice-insights/api/call/details-sdk-call-quality-events`],
+}
+const err = (code) => [`Error ${code}`, `${TW}/api/errors/${code}`]
+
+const SECTION_LINKS = {
+  overview: [L.sdk, L.getStarted, L.device, L.call, L.tokens, L.dial, L.bestPractices],
+  device: [L.device, L.tokens, L.network, L.edges, L.errors],
+  outbound: [L.call, L.dial, L.number, L.amd, L.messages, L.errors],
+  inbound: [L.device, L.call, L.dial],
+  audio: [L.audio, L.call, L.errors],
+  network: [L.call, L.qualityEvents, L.network, L.edges, L.globalEdges],
+  preflight: [L.preflight, L.record, L.play, L.redirect, L.edges],
+  messages: [L.messages, L.udm, L.udmSub, L.call],
+  failures: [L.errors, L.changelog, L.bestPractices],
+}
+
+const CARD_LINKS = {
+  'Token expiry / refresh': [L.device, L.tokens, err(20101), err(20104), err(31204), err(31205)],
+  'Laptop sleep / wake / back online': [L.device, L.tokens],
+  'Firewall / WebSocket blocked': [L.network, err(31005), err(31009), err(53000), err(53001)],
+  'Unexpected unregister': [L.device],
+  'Busy / declined / unavailable': [err(31486), err(31603), err(31480), L.errors],
+  'No answer timeout': [L.dial, L.call],
+  'Early media (carrier messages)': [L.dial, L.number, L.call],
+  'Voicemail / AMD': [L.amd, L.number, L.messages],
+  'Hangups & suggested disposition': [L.call, L.dial],
+  'Inbound while busy': [L.device, L.call],
+  'Missed (caller cancels)': [L.call],
+  'Ignore': [L.call],
+  'Device management tab': [L.audio],
+  'Mic permission denied': [err(31401), L.audio],
+  'Mic busy / unplugged': [err(31402), L.audio],
+  'Dead mic (no audio)': [L.call, L.qualityEvents],
+  'Reconnecting / signaling timeout': [L.call, L.device, err(53001)],
+  'Media failure (ICE)': [err(53405), L.network],
+  'Quality warnings & MOS': [L.call, L.qualityEvents],
+  'PreflightTest': [L.preflight, err(31008), L.edges],
+  'Server record / playback': [L.record, L.play, L.redirect],
+  'User-defined messages': [L.messages, L.udm],
+  'Push transfer status': [L.udm],
+  'Invalid token': [err(20101), err(31204)],
+  'Short TTL': [L.tokens],
+  'Blocked WebSocket': [err(31005), err(31009), err(53000)],
+  'Mic blocked / unplugged / silent': [err(31401), err(31402)],
+  'Callee outcomes': [err(31486), err(31603), err(31480)],
+  'Bad network quality': [L.qualityEvents],
+}
+
+const REFERENCES = [
+  L.sdk, L.getStarted, L.device, L.call, L.audio, L.preflight, L.errors, L.tokens, L.messages, L.udm, L.amd,
+  L.dial, L.number, L.record, L.play, L.edges, L.globalEdges, L.network, L.bestPractices, L.changelog,
+]
+
+function ExtLinks({ links, className = 'doc-links' }) {
+  if (!links?.length) return null
+  return (
+    <ul className={className}>
+      {links.map(([label, href]) => (
+        <li key={href}>
+          <a href={href} target="_blank" rel="noopener noreferrer">
+            {label} ↗
+          </a>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export default function Docs() {
   return (
     <div className="app docs">
@@ -236,10 +330,15 @@ export default function Docs() {
             {t.label}
           </a>
         ))}
+        <a className="tab" href="#references">References</a>
       </nav>
       {TABS.map((t) => (
         <section key={t.id} id={t.id} className="doc-section">
           <h2 className="doc-section-title">{t.label}</h2>
+          <div className="doc-twilio-links">
+            <span className="hint">Twilio docs:</span>
+            <ExtLinks links={SECTION_LINKS[t.id]} className="doc-links inline" />
+          </div>
           {t.intro && <div className="panel doc-intro">{t.intro}</div>}
           {t.cards.map((c) => (
             <article key={c.title} className="panel doc-card">
@@ -251,11 +350,25 @@ export default function Docs() {
                 <dd>{c.handling}</dd>
                 <dt>How to reproduce</dt>
                 <dd>{c.repro}</dd>
+                {CARD_LINKS[c.title] && (
+                  <>
+                    <dt>Twilio docs</dt>
+                    <dd>
+                      <ExtLinks links={CARD_LINKS[c.title]} className="doc-links inline" />
+                    </dd>
+                  </>
+                )}
               </dl>
             </article>
           ))}
         </section>
       ))}
+      <section id="references" className="doc-section">
+        <h2 className="doc-section-title">References</h2>
+        <div className="panel doc-intro">
+          <ExtLinks links={REFERENCES} />
+        </div>
+      </section>
     </div>
   )
 }
