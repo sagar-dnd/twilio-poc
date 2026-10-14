@@ -3,6 +3,7 @@ import { useTwilioDevice } from './useTwilioDevice'
 import { usePreflight, summarizeReport } from './usePreflight'
 import { ERROR_CATALOG } from './twilioEvents'
 import CallModal from './CallModal'
+import { startMicMeter, playSpeakerTest } from './audioMeters'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
@@ -54,6 +55,80 @@ export default function App() {
       (logFilter === 'all' || e.source === logFilter) &&
       (!q || [e.msg, e.detail, e.source, e.level].some((v) => v != null && String(v).toLowerCase().includes(q)))
   )
+  // Device management meters (separate from the SDK's call meters)
+  const [idleMic, setIdleMic] = useState(0)
+  const [speakerLevel, setSpeakerLevel] = useState(0)
+  const [speakerTesting, setSpeakerTesting] = useState(false)
+  const [speakerNoOutput, setSpeakerNoOutput] = useState(false)
+  const [heardPrompt, setHeardPrompt] = useState(false)
+  const [speakerMutedWarn, setSpeakerMutedWarn] = useState(false)
+  const [micTrackMuted, setMicTrackMuted] = useState(false)
+  const [idleMicSilent, setIdleMicSilent] = useState(false)
+  const lastLoudRef = useRef(0)
+  const twLog = twilio.log
+  const idleMicOn = tab === 'devices' && twilio.deviceState === 'registered' && !twilio.activeCall
+  useEffect(() => {
+    if (!idleMicOn) return
+    let meter = null
+    let cancelled = false
+    lastLoudRef.current = Date.now()
+    // Silent = level ~0 for 3s (React bails out when the boolean doesn't change).
+    const onLevel = (v) => {
+      setIdleMic(v)
+      const now = Date.now()
+      if (v > 0.01) lastLoudRef.current = now
+      setIdleMicSilent(now - lastLoudRef.current >= 3000)
+    }
+    const onMuted = (m) => {
+      setMicTrackMuted(m)
+      if (m) twLog('warn', 'mic track muted (track.muted / mute event)', null, 'audio')
+    }
+    startMicMeter(twilio.selectedInput, onLevel, onMuted)
+      .then((m) => {
+        if (cancelled) return m.stop()
+        meter = m
+        twLog('info', 'idle mic meter started', m.label, 'audio')
+      })
+      .catch((e) => twLog('error', 'idle mic meter failed', e?.message || String(e), 'audio'))
+    return () => {
+      cancelled = true
+      setIdleMicSilent(false)
+      if (meter) {
+        meter.stop()
+        twLog('info', 'idle mic meter stopped', null, 'audio')
+      }
+    }
+  }, [idleMicOn, twilio.selectedInput, twLog])
+
+  async function onTestSpeaker() {
+    setSpeakerTesting(true)
+    setSpeakerNoOutput(false)
+    setHeardPrompt(false)
+    setSpeakerMutedWarn(false)
+    try {
+      twLog('info', 'speaker test: playing tone', twilio.selectedOutput || 'default', 'audio')
+      const { peak, sink } = await playSpeakerTest(twilio.selectedOutput, setSpeakerLevel)
+      const none = peak <= 0.01
+      setSpeakerNoOutput(none)
+      twLog(none ? 'warn' : 'info', none ? 'speaker test: no output detected' : `speaker test done: peak level ${peak.toFixed(2)}`, sink, 'audio')
+      setHeardPrompt(true)
+    } catch (e) {
+      twLog('warn', 'speaker test tone failed, falling back to speakerDevices.test()', e?.message || String(e), 'audio')
+      await twilio.testSpeaker()
+      setHeardPrompt(true)
+    } finally {
+      setSpeakerLevel(0)
+      setSpeakerTesting(false)
+    }
+  }
+
+  function onHeard(yes) {
+    setHeardPrompt(false)
+    setSpeakerMutedWarn(!yes)
+    if (yes) twLog('info', 'speaker test: agent heard the tone', null, 'audio')
+    else twLog('warn', 'speaker test: agent did NOT hear the tone — speaker muted or volume 0?', twilio.selectedOutput || 'default', 'audio')
+  }
+
   function selectTab(id) {
     window.history.replaceState(null, '', `#${id}`)
     setTab(id)
@@ -708,19 +783,46 @@ export default function App() {
         )}
         <dl className="meta">
           <div>
-            <dt>Mic level (live)</dt>
+            <dt>Mic (input) level {twilio.activeCall ? '· from call' : '· idle meter'}</dt>
             <dd>
-              <meter min="0" max="1" value={twilio.activeCall ? twilio.health.inputLevel : twilio.micLevel} />
+              <meter min="0" max="1" value={twilio.activeCall ? twilio.health.inputLevel : Math.max(idleMic, twilio.micLevel)} />
+            </dd>
+          </div>
+          <div>
+            <dt>Speaker (output) level {speakerTesting ? '· test tone' : twilio.activeCall ? '· from call' : ''}</dt>
+            <dd>
+              <meter min="0" max="1" value={speakerTesting ? speakerLevel : twilio.activeCall ? twilio.health.outputLevel ?? 0 : 0} />
             </dd>
           </div>
         </dl>
         <div className="row">
+          {(micTrackMuted || idleMicSilent || (twilio.activeCall && twilio.health.micDead)) && (
+            <span className="badge error">Mic muted / silent{micTrackMuted ? ' (track muted)' : ''}</span>
+          )}
+          {speakerTesting && speakerLevel <= 0.01 && <span className="badge warn">Measuring…</span>}
+          {!speakerTesting && speakerNoOutput && <span className="badge error">No output detected</span>}
+          {speakerMutedWarn && (
+            <span className="badge warn">Speaker may be muted or volume at 0, check system volume or the selected output device</span>
+          )}
+        </div>
+        {heardPrompt && (
+          <div className="banner incoming" role="status">
+            <span>Did you hear the test tone?</span>
+            <button type="button" onClick={() => onHeard(true)}>Yes</button>
+            <button type="button" className="ghost" onClick={() => onHeard(false)}>No</button>
+          </div>
+        )}
+        <p className="hint">
+          Browsers can't read the OS output volume or mute state. The speaker meter measures the tone we send; whether
+          it's audible is confirmed by the Yes/No prompt.
+        </p>
+        <div className="row">
           <button
             type="button"
-            disabled={twilio.deviceState !== 'registered' || !twilio.outputSelectionSupported}
-            onClick={twilio.testSpeaker}
+            disabled={twilio.deviceState !== 'registered' || speakerTesting}
+            onClick={onTestSpeaker}
           >
-            Test speaker
+            {speakerTesting ? 'Testing…' : 'Test speaker'}
           </button>
           <button type="button" className="ghost" disabled={twilio.deviceState !== 'registered'} onClick={twilio.refreshDevices}>
             Refresh list
