@@ -812,10 +812,6 @@ export default function App() {
             <button type="button" className="ghost" onClick={() => onHeard(false)}>No</button>
           </div>
         )}
-        <p className="hint">
-          Browsers can't read the OS output volume or mute state. The speaker meter measures the tone we send; whether
-          it's audible is confirmed by the Yes/No prompt.
-        </p>
         <div className="row">
           <button
             type="button"
