@@ -45,7 +45,7 @@ See [FINDINGS.md](./FINDINGS.md) for how this maps to Power / Dynamic / Predicti
 
 Device options (`client/src/useTwilioDevice.js`): `tokenRefreshMs: 30000`, `maxCallSignalingTimeoutMs: 30000`,
 `enableImprovedSignalingErrorPrecision: true`, `allowIncomingWhileBusy: true` (incoming calls always ring,
-even mid-call), `closeProtection`. Error catalog + disposition mapping live in `client/src/twilioEvents.js`.
+even mid-call), `closeProtection`. Error catalog + disposition mapping live in `client/src/lib.js`.
 
 **Device events handled:** `registering`, `registered`, `unregistered`, `error`, `incoming`, `tokenWillExpire`, `destroyed`
 (+ `device.audio` `deviceChange`).
@@ -83,7 +83,7 @@ Error codes checked against `twilio.com/docs/api/errors/<code>` and the 2.0 chan
 
 ## Network test (PreflightTest)
 
-Panel **0** runs `Device.runPreflight(token, options)` (`client/src/usePreflight.js`). It handles the `connected`,
+Panel **0** runs `Device.runPreflight(token, options)` (`client/src/hooks.js`). It handles the `connected`,
 `sample`, `warning`, `completed` and `failed` events, and shows: call quality rating (`excellent` / `great` / `good` /
 `fair` / `degraded`), average MOS / RTT / jitter, packet loss, the selected ICE candidate (type / protocol / network
 type), whether TURN was required, edge, signaling time, warnings and errors. **Stop** raises `failed` with 31008.
@@ -110,39 +110,32 @@ quality warnings); after changing Wi-Fi, VPN or location. Don't run it during a 
 
 ## Architecture
 
+Small and flat on purpose: one file per concern, with section comments inside.
+
 ```
 client/src/
-  main.jsx               # / → App, /docs → DocsPage
-  App.jsx                # thin shell: shared Device, tab state, layout
-  components/
-    Header, ErrorBanner, IncomingBanner, DevicePanel, Tabs, CallModal, LogsDrawer, Badge, Meter, DocsPage
-    tabs/                # one file per tab
-      CallingTab, OutboundOutcomesTab, PowerLoopTab, PreflightTab,
-      CallHealthTab, DeviceManagementTab, ConferenceCallTab, FailureCasesTab
-  hooks/
-    useTwilioDevice.js   # Device lifecycle, calls, token refresh (public API used by every tab)
-    twilio/              # internal pieces: useEventLog, useAudioDevices, useReRegister, useWakeRecovery
-    usePreflight, usePowerLoop, useCallHangup, useLeaveWarning,
-    useDraggable, useMicMeter, useSpeakerTest, useHashTab
-  lib/
-    api.js               # every fetch to the server
-    constants.js         # tabs, regexes, timings, limits
-    twilioEvents.js      # error catalog, dispositions, backoff, message parsing
-    audioMeters.js, callHealth.js
+  main.jsx            # / → App, /docs → Docs
+  App.jsx             # shell: Header, banners, Device panel, Tabs + layout; owns the shared Device
+  tabs.jsx            # Calling, Outbound outcomes, Power loop, Preflight, Call health, Failure cases
+  moreTabs.jsx        # Device management, Conference call
+  ui.jsx              # Badge, Meter, CallModal (draggable), LogsDrawer
+  Docs.jsx            # /docs single page
+  useTwilioDevice.js  # Device lifecycle, calls, token refresh, audio devices, re-register, wake recovery
+  hooks.js            # usePreflight, usePowerLoop, useDraggable, useMicMeter, useSpeakerTest, useHashTab, …
+  lib.js              # constants, Twilio error catalog/dispositions, audio meters, call-health formatting, server API
+  App.css, index.css
 server/
-  index.js               # mounts routers, /health, listen
-  config.js              # dotenv + env validation (missing list, requireEnv, baseUrl)
-  lib/                   # twilioClient, identity, pushToClient
-  routes/                # token, voice, preflight, demo, conference (/agent-drop/*)
+  index.js            # Express app + all routes (token, voice, preflight, demo, /agent-drop/*, /health)
+  twilio.js           # dotenv config + env validation, REST client, identity/push helpers
 ```
 
 **Data flow**
 
-1. `DevicePanel` → `useTwilioDevice.register()` → `lib/api.fetchToken` → `GET /token` → `new Device(token)`.
-2. Outbound: `device.connect()` → Twilio → TwiML App → `POST /voice` (`routes/voice.js`) → `<Dial>` (or a `<Conference>` for the Conference call tab).
-3. Inbound: PSTN → `/voice/inbound` → `<Client>` → Device `incoming` → `IncomingBanner`.
-4. Status/AMD/conference callbacks hit the server, which pushes user-defined messages to the call (`lib/pushToClient`); the hook logs them and tabs render from its state.
-5. Every SDK/server event lands in the hook's event log → `LogsDrawer`.
+1. Device panel (`App.jsx`) → `useTwilioDevice.register()` → `fetchToken` (`lib.js`) → `GET /token` → `new Device(token)`.
+2. Outbound: `device.connect()` → Twilio → TwiML App → `POST /voice` → `<Dial>` (or a `<Conference>` for the Conference call tab).
+3. Inbound: PSTN → `/voice/inbound` → `<Client>` → Device `incoming` → incoming banner.
+4. Status/AMD/conference callbacks hit the server, which pushes user-defined messages to the call (`pushToClient` in `twilio.js`); the hook logs them and tabs render from its state.
+5. Every SDK/server event lands in the hook's event log → `LogsDrawer` (`ui.jsx`).
 
 ## Official Twilio docs
 

@@ -14,8 +14,8 @@ const TABS = [
         <ul>
           <li>
             <b>Client</b> — React + Vite. Device lifecycle, calls, audio and recovery in <C>useTwilioDevice.js</C>;
-            error catalog, disposition mapping, backoff, dead-mic detector and message parsing in <C>twilioEvents.js</C>
-            ; network test in <C>usePreflight.js</C>.
+            error catalog, disposition mapping, backoff, dead-mic detector and message parsing in <C>lib.js</C>; network
+            test in <C>hooks.js</C>.
           </li>
           <li>
             <b>Server</b> — <C>GET /token</C>, <C>POST /voice</C> (outbound Dial with <C>answerOnBridge</C>, optional
@@ -53,8 +53,8 @@ const TABS = [
         handling: (
           <>
             Refetch <C>/token</C> → <C>device.updateToken()</C> (<C>refreshToken</C> in <C>useTwilioDevice.js</C>).
-            Token codes are <C>kind: 'token'</C> in <C>ERROR_CATALOG</C> (<C>twilioEvents.js</C>).{' '}
-            <C>tokenRefreshMs: 30000</C> fires the event 30s before expiry.
+            Token codes are <C>kind: 'token'</C> in <C>ERROR_CATALOG</C> (<C>lib.js</C>). <C>tokenRefreshMs: 30000</C>{' '}
+            fires the event 30s before expiry.
           </>
         ),
         repro: (
@@ -88,8 +88,8 @@ const TABS = [
         ),
         handling: (
           <>
-            <C>scheduleReRegister</C> uses <C>backoffMs(attempt)</C> (<C>twilioEvents.js</C>): exponential 1s → 30s cap
-            with jitter; retries until registered, skipped after an intentional unregister.
+            <C>scheduleReRegister</C> uses <C>backoffMs(attempt)</C> (<C>lib.js</C>): exponential 1s → 30s cap with
+            jitter; retries until registered, skipped after an intentional unregister.
           </>
         ),
         repro: (
@@ -318,8 +318,8 @@ const TABS = [
         ),
         handling: (
           <>
-            <C>createMicDeadDetector</C> (<C>twilioEvents.js</C>): input ≤ 0.001 for 5s while unmuted → "Mic silent"
-            badge; clears on recovery.
+            <C>createMicDeadDetector</C> (<C>lib.js</C>): input ≤ 0.001 for 5s while unmuted → "Mic silent" badge;
+            clears on recovery.
           </>
         ),
         repro: <>Mid-call, set OS input volume to 0 (or pick a muted hardware mic).</>,
@@ -380,9 +380,9 @@ const TABS = [
         ),
         handling: (
           <>
-            <C>Device.runPreflight</C> in <C>usePreflight.js</C>; shows quality rating, avg MOS/RTT/jitter, packet loss,
-            ICE candidate, TURN, edge, signaling time. Stop → <C>failed</C> 31008. Disabled during a live call. Token
-            from <C>/token?purpose=preflight</C> (uses <C>TWILIO_PREFLIGHT_TWIML_APP_SID</C> if set).
+            <C>Device.runPreflight</C> in <C>hooks.js</C>; shows quality rating, avg MOS/RTT/jitter, packet loss, ICE
+            candidate, TURN, edge, signaling time. Stop → <C>failed</C> 31008. Disabled during a live call. Token from{' '}
+            <C>/token?purpose=preflight</C> (uses <C>TWILIO_PREFLIGHT_TWIML_APP_SID</C> if set).
           </>
         ),
         repro: <>Panel 0 → Run. Run pre-shift, after network issues, or after changing Wi-Fi/VPN.</>,
@@ -421,7 +421,7 @@ const TABS = [
         handling: (
           <>
             Server <C>pushToClient</C> → <C>calls(parent).userDefinedMessages.create</C>; client <C>parseUserMessage</C>{' '}
-            (<C>twilioEvents.js</C>) parses JSON (plain text → <C>type: 'text'</C>). <C>messageSent</C> logged with{' '}
+            (<C>lib.js</C>) parses JSON (plain text → <C>type: 'text'</C>). <C>messageSent</C> logged with{' '}
             <C>voiceEventSid</C>.
           </>
         ),
@@ -472,7 +472,7 @@ const TABS = [
             <C>/agent-drop/agent-message</C>. The server waits 2s before acting on a leave. <b>Residual risk:</b> if
             both signals are lost (e.g. the network dies at the moment of Hang up), the customer hears the message even
             though the agent meant to hang up. Twilio doesn't report in real time which side ended a client leg (
-            <C>server/index.js</C>, <C>AgentDrop.jsx</C>).
+            <C>server/index.js</C>, <C>moreTabs.jsx</C>).
           </>
         ),
         repro: (
@@ -688,7 +688,7 @@ function ExtLinks({ links, className = 'doc-links' }) {
   )
 }
 
-export default function DocsPage() {
+export default function Docs() {
   return (
     <div className="app docs">
       <header className="topbar">

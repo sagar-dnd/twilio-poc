@@ -1,4 +1,9 @@
+/**
+ * Twilio + environment: dotenv config with validation, the REST client and small helpers
+ * shared by the routes in index.js.
+ */
 const path = require("path");
+const twilio = require("twilio");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
@@ -6,6 +11,10 @@ const DEFAULT_AGENT_DROP_MESSAGE =
   "Sorry, we are unable to continue this call right now. We will call you back.";
 const DEFAULT_HOLD_MUSIC_URL =
   "http://com.twilio.sounds.music.s3.amazonaws.com/MARKOVICHAMP-Borghestral.mp3";
+
+// ---------------------------------------------------------------------------
+// Config / env validation
+// ---------------------------------------------------------------------------
 
 const env = process.env;
 
@@ -52,4 +61,44 @@ function baseUrl() {
   return config.PUBLIC_BASE_URL.replace(/\/$/, "");
 }
 
-module.exports = { ...config, missing, requireEnv, baseUrl };
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** REST client authenticated with the API key (same credentials as Access Tokens). */
+function twilioRest() {
+  return twilio(config.TWILIO_API_KEY, config.TWILIO_API_SECRET, {
+    accountSid: config.TWILIO_ACCOUNT_SID,
+  });
+}
+
+/** Twilio client identities: strip "client:" and anything outside [A-Za-z0-9_-]. */
+function sanitizeIdentity(raw) {
+  return String(raw || "")
+    .replace(/^client:/i, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 64);
+}
+
+/** Push a JSON user-defined message to the browser call leg (Call.on('messageReceived')). */
+async function pushToClient(parentCallSid, content) {
+  if (!parentCallSid) return;
+  try {
+    await twilioRest()
+      .calls(parentCallSid)
+      .userDefinedMessages.create({ content: JSON.stringify(content) });
+  } catch (e) {
+    console.warn("[udm] push failed", parentCallSid, e.message);
+  }
+}
+
+module.exports = {
+  ...config,
+  missing,
+  requireEnv,
+  baseUrl,
+  twilio,
+  twilioRest,
+  sanitizeIdentity,
+  pushToClient,
+};
