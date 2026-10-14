@@ -207,6 +207,18 @@ const TABS = [
     ],
   },
   {
+    id: 'conference',
+    label: 'Conference call',
+    cards: [
+      {
+        title: 'Agent Wi-Fi drops mid-call',
+        events: <>Agent leg lost (SDK <C>reconnecting</C>, then the leg ends); Conference <C>participant-leave</C> for the agent's CallSid</>,
+        handling: <>With <C>mode=conference</C>, <C>/voice</C> puts the browser leg in a <C>&lt;Conference&gt;</C> (<C>endConferenceOnExit=false</C>, with a status callback for join, leave and end). On agent join the server dials the customer into the same room via REST (<C>endConferenceOnExit=true</C>). On an unexpected agent leave, <C>/agent-drop/conference-status</C> redirects the customer leg (<C>calls(sid).update</C>) to hold music for <C>AGENT_DROP_GRACE_SECONDS</C>, then <C>&lt;Say&gt;</C> the message + <C>&lt;Hangup/&gt;</C>. If the agent rejoins in time, the customer is redirected back into the room. Hang up from the call window first hits <C>/agent-drop/hangup</C>, so a normal hang-up just ends the customer leg. As a backup, the browser also sends an in-call <C>agent-hangup</C> user-defined message, which goes over Twilio signaling to <C>/agent-drop/agent-message</C>. The server waits 2s before acting on a leave. <b>Residual risk:</b> if both signals are lost (e.g. the network dies at the moment of Hang up), the customer hears the message even though the agent meant to hang up. Twilio doesn't report in real time which side ended a client leg (<C>server/index.js</C>, <C>AgentDrop.jsx</C>).</>,
+        repro: <>Set <C>PUBLIC_BASE_URL</C> (ngrok). Conference call tab → Start resilient call → after the customer answers, turn Wi-Fi off. Optional: set grace, turn Wi-Fi back on and click Rejoin.</>,
+      },
+    ],
+  },
+  {
     id: 'failures',
     label: 'Failure Demos',
     cards: [
@@ -247,6 +259,9 @@ const L = {
   record: ['TwiML <Record>', `${TW}/voice/twiml/record`],
   play: ['TwiML <Play>', `${TW}/voice/twiml/play`],
   redirect: ['TwiML <Redirect>', `${TW}/voice/twiml/redirect`],
+  conference: ['TwiML <Conference>', `${TW}/voice/twiml/conference`],
+  conferenceApi: ['Conference resource', `${TW}/voice/api/conference-resource`],
+  modifyCalls: ['Modify calls in progress', `${TW}/voice/tutorials/how-to-modify-calls-in-progress`],
   callResource: ['Call resource (REST)', `${TW}/voice/api/call-resource`],
   qualityEvents: ['SDK call quality events (Voice Insights)', `${TW}/voice/voice-insights/api/call/details-sdk-call-quality-events`],
 }
@@ -261,6 +276,7 @@ const SECTION_LINKS = {
   network: [L.call, L.qualityEvents, L.network, L.edges, L.globalEdges],
   preflight: [L.preflight, L.record, L.play, L.redirect, L.edges],
   messages: [L.messages, L.udm, L.udmSub, L.call],
+  conference: [L.conference, L.conferenceApi, L.modifyCalls, L.dial],
   failures: [L.errors, L.changelog, L.bestPractices],
 }
 
@@ -294,6 +310,7 @@ const CARD_LINKS = {
   'Mic blocked / unplugged / silent': [err(31401), err(31402)],
   'Callee outcomes': [err(31486), err(31603), err(31480)],
   'Bad network quality': [L.qualityEvents],
+  'Agent Wi-Fi drops mid-call': [L.conference, L.modifyCalls, L.callResource],
 }
 
 const REFERENCES = [
@@ -319,10 +336,16 @@ function ExtLinks({ links, className = 'doc-links' }) {
 export default function Docs() {
   return (
     <div className="app docs">
-      <header>
-        <a className="nav-link" href="/">← Back to app</a>
-        <h1>Twilio Voice POC — Docs</h1>
-        <p className="sub">Scenarios, events fired, how we handle them, and how to reproduce</p>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="topbar-title">
+            <h1>Twilio Voice SDK POC · Docs</h1>
+            <p className="sub">Scenarios, events fired, how we handle them, and how to reproduce</p>
+          </div>
+          <div className="header-actions">
+            <a className="nav-link" href="/">← Back to app</a>
+          </div>
+        </div>
       </header>
       <nav className="tabs quicklinks" aria-label="Quick links">
         {TABS.map((t) => (

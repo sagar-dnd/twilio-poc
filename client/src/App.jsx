@@ -3,7 +3,8 @@ import { useTwilioDevice } from './useTwilioDevice'
 import { usePreflight, summarizeReport } from './usePreflight'
 import { ERROR_CATALOG } from './twilioEvents'
 import CallModal from './CallModal'
-import { startMicMeter, playSpeakerTest } from './audioMeters'
+import AgentDrop from './AgentDrop'
+import { startMicMeter, playSpeakerTest, releaseMicNow } from './audioMeters'
 import './App.css'
 
 const E164 = /^\+[1-9]\d{6,14}$/
@@ -15,6 +16,7 @@ const TABS = [
   ['preflight', 'Preflight'],
   ['health', 'Call health'],
   ['devices', 'Device management'],
+  ['conference', 'Conference call'],
   ['failures', 'Failure cases'],
 ]
 const CALLEE_CODES = Object.entries(ERROR_CATALOG).filter(([, v]) => v.kind === 'callee')
@@ -99,6 +101,11 @@ export default function App() {
       }
     }
   }, [idleMicOn, twilio.selectedInput, twLog])
+  // Free the meter's mic as soon as a call starts or the Device goes away.
+  useEffect(() => {
+    if (twilio.activeCall || twilio.deviceState !== 'registered') releaseMicNow()
+  }, [twilio.activeCall, twilio.deviceState])
+  useEffect(() => () => releaseMicNow(), [])
 
   async function onTestSpeaker() {
     setSpeakerTesting(true)
@@ -129,6 +136,30 @@ export default function App() {
     else twLog('warn', 'speaker test: agent did NOT hear the tone — speaker muted or volume 0?', twilio.selectedOutput || 'default', 'audio')
   }
 
+  const [agentDropRoom, setAgentDropRoom] = useState(null)
+  // Hang up: if this is an agent-drop conference call, mark it intentional first
+  // so the server doesn't play the customer the "sorry" message.
+  async function onModalHangup() {
+    if (agentDropRoom && twilio.activeCall?.direction === 'outbound') {
+      // Two independent channels; either one marks the hang-up as intentional.
+      const ctl = new AbortController()
+      const timer = setTimeout(() => ctl.abort(), 1500)
+      const http = fetch('/agent-drop/hangup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: agentDropRoom }),
+        signal: ctl.signal,
+      })
+        .then((r) => r.ok)
+        .catch(() => false)
+      const inCall = twilio.sendMessage({ type: 'agent-hangup', room: agentDropRoom })
+      const [httpOk, msgOk] = await Promise.all([http, inCall])
+      clearTimeout(timer)
+      twilio.log(httpOk || msgOk ? 'info' : 'warn', 'agent-drop: intentional hang-up signalled', `http=${httpOk} in-call=${msgOk}`, 'call')
+    }
+    twilio.hangup()
+  }
+
   function selectTab(id) {
     window.history.replaceState(null, '', `#${id}`)
     setTab(id)
@@ -137,11 +168,16 @@ export default function App() {
   async function onPushTransfer(status) {
     const callSid = twilio.activeCall?.sid
     if (!callSid) return
-    await fetch('/demo/push-message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callSid, content: { type: 'transfer', status } }),
-    })
+    try {
+      const r = await fetch('/demo/push-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callSid, content: { type: 'transfer', status } }),
+      })
+      if (!r.ok) throw new Error(`push-message ${r.status}`)
+    } catch (e) {
+      twilio.log('error', 'push transfer failed', e?.message || String(e), 'app')
+    }
   }
 
   // Warn before refresh/close during dialer work (browser shows its own confirm dialog)
@@ -181,7 +217,8 @@ export default function App() {
     try {
       await twilio.connect({ to: to.trim() })
     } catch (e) {
-      /* logged in hook */
+      // The hook already sets the error banner; keep a breadcrumb for the UI action.
+      twilio.log('warn', 'Connect click failed', e?.message || String(e), 'app')
     } finally {
       setBusy(false)
     }
@@ -275,15 +312,19 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <div className="header-actions">
-          <button type="button" className="ghost logs-btn" onClick={() => setLogsOpen(true)}>
-            Logs <span className="count">{twilio.logs.length}</span>
-          </button>
-          <a className="nav-link" href="/docs">Docs →</a>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="topbar-title">
+            <h1>Twilio Voice SDK POC</h1>
+            <p className="sub">SD-7331 · Device lifecycle, calls, audio, token refresh &amp; recovery</p>
+          </div>
+          <div className="header-actions">
+            <button type="button" className="ghost logs-btn" onClick={() => setLogsOpen(true)}>
+              Logs <span className="count">{twilio.logs.length}</span>
+            </button>
+            <a className="nav-link" href="/docs">Docs →</a>
+          </div>
         </div>
-        <h1>Twilio Voice POC</h1>
-        <p className="sub">SD-7331 — Device lifecycle, calls, audio, token refresh &amp; recovery</p>
       </header>
 
       {twilio.error && (
@@ -322,8 +363,10 @@ export default function App() {
           />
         </label>
         <div className="row">
-          <button type="button" disabled={busy || twilio.deviceState === 'registered'} onClick={onRegister}>
-            Register Device
+          <button type="button" disabled={busy || twilio.deviceState === 'registered' || twilio.deviceState === 'registering'}
+            onClick={onRegister}
+          >
+            {busy || twilio.deviceState === 'registering' ? 'Registering…' : 'Register Device'}
           </button>
           <button
             type="button"
@@ -847,6 +890,9 @@ export default function App() {
         </ul>
       </section>
       </div>
+      <div className="tab-pane" hidden={tab !== 'conference'}>
+        <AgentDrop twilio={twilio} room={agentDropRoom} setRoom={setAgentDropRoom} />
+      </div>
       <div className="tab-pane" hidden={tab !== 'failures'}>
       <section className="panel">
         <h2>4. Failure / recovery demos</h2>
@@ -876,7 +922,7 @@ export default function App() {
           reconnecting={twilio.health.reconnecting}
           muted={twilio.muted}
           onToggleMute={twilio.toggleMute}
-          onHangup={twilio.hangup}
+          onHangup={onModalHangup}
         />
       )}
       {logsOpen && <div className="sheet-backdrop" onClick={() => setLogsOpen(false)} />}

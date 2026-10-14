@@ -20,12 +20,51 @@ function poll(analyser, onLevel, intervalMs = 80) {
   return () => clearInterval(t)
 }
 
-/** Start an idle mic meter. Returns a stop() function. */
-export async function startMicMeter(deviceId, onLevel, onMuted) {
+/*
+ * Shared mic stream: reused across meter restarts (tab switches, re-renders) so the
+ * browser isn't asked for getUserMedia again and again. Released (tracks stopped)
+ * a few seconds after the last meter stops, or immediately when the device changes.
+ */
+const RELEASE_MS = 10000
+let shared = null // { deviceId, stream, ctx, refs, releaseTimer }
+
+function releaseShared() {
+  if (!shared) return
+  clearTimeout(shared.releaseTimer)
+  shared.stream.getTracks().forEach((tr) => tr.stop())
+  shared.ctx.close().catch(() => {})
+  shared = null
+}
+
+async function acquireMic(deviceId) {
+  const key = deviceId || 'default'
+  if (shared && shared.deviceId === key && shared.stream.getAudioTracks().some((t) => t.readyState === 'live')) {
+    clearTimeout(shared.releaseTimer)
+    shared.refs += 1
+    return shared
+  }
+  releaseShared()
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: deviceId && deviceId !== 'default' ? { deviceId: { exact: deviceId } } : true,
+    audio: key !== 'default' ? { deviceId: { exact: key } } : true,
   })
-  const ctx = new AudioContext()
+  shared = { deviceId: key, stream, ctx: new AudioContext(), refs: 1, releaseTimer: null }
+  return shared
+}
+
+function releaseMic(entry) {
+  if (!shared || shared !== entry) return
+  shared.refs = Math.max(0, shared.refs - 1)
+  if (shared.refs === 0) {
+    clearTimeout(shared.releaseTimer)
+    shared.releaseTimer = setTimeout(releaseShared, RELEASE_MS)
+  }
+}
+
+/** Start an idle mic meter. Returns { label, stop() }. */
+export async function startMicMeter(deviceId, onLevel, onMuted) {
+  const entry = await acquireMic(deviceId)
+  const { ctx, stream } = entry
+  if (ctx.state === 'suspended') await ctx.resume().catch(() => {})
   const src = ctx.createMediaStreamSource(stream)
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 1024
@@ -39,18 +78,26 @@ export async function startMicMeter(deviceId, onLevel, onMuted) {
   track?.addEventListener('mute', onMute)
   track?.addEventListener('unmute', onUnmute)
   onMuted?.(Boolean(track?.muted))
+  let stopped = false
   return {
     label,
     stop() {
+      if (stopped) return
+      stopped = true
       stopPoll()
       track?.removeEventListener('mute', onMute)
       track?.removeEventListener('unmute', onUnmute)
+      src.disconnect()
       onMuted?.(false)
-      stream.getTracks().forEach((tr) => tr.stop())
-      ctx.close().catch(() => {})
       onLevel(0)
+      releaseMic(entry)
     },
   }
+}
+
+/** Stop the shared mic stream now (e.g. before a call grabs the mic). */
+export function releaseMicNow() {
+  releaseShared()
 }
 
 /**

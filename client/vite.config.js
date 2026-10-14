@@ -10,6 +10,7 @@ export default defineConfig({
       '/health': 'http://localhost:3001',
       '/voice': 'http://localhost:3001',
       '/demo': 'http://localhost:3001',
+      '/agent-drop': 'http://localhost:3001',
     },
   },
 })
